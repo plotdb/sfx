@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# 把 demo 頁 ( web/static ) 發佈到 GitHub Pages 的 gh-pages branch
+#  - 只帶頁面實際引用的檔案 ( web/static/assets/lib 是 fedep 複製的整個套件, 太大 )
+#  - fedep 的 main 是 symlink, GitHub Pages 不會跟隨, 這裡複製成實體檔
+#  - 推送交給 @zbryikt/deploy
+set -euo pipefail
+out=.deploy/static
+rm -rf .deploy
+mkdir -p $out
+cp web/static/*.html $out/
+for f in $(grep -ohE '(src|href)="assets/[^"?]+' web/static/*.html | sed -E 's/^(src|href)="//' | sort -u); do
+  mkdir -p "$out/$(dirname "$f")"
+  cp -L "web/static/$f" "$out/$f"
+done
+echo "staged $(find $out -type f | wc -l | tr -d ' ') files, $(du -sh $out | cut -f1) into $out"
+if [[ "${1:-}" == "--dry" ]]; then exit 0; fi
+npx deploy $out gh-pages

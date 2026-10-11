@@ -14,7 +14,8 @@
    ( 有 note 參數的合成聲以音高合成, 其他聲音以 base 為準變調 ); `S.score` / `S.score.parse` / `S.score.duration`
  - feature: `synth.melody` 新增 `release` ( 每個音之後的尾音, 預設 0.8 不變 )
  - feature: demo 頁新增五線譜 ( 4/4 拍 4 小節, 鍵盤編輯音長 / 附點 / 休止、拖曳改音高, 與樂譜文字雙向同步, 選樂器或 🎲 隨機 )
- - tweak: demo 頁標題改為「音效清單」與「全部音效：合成細節」
+ - tweak: demo 頁標題改為「音效清單」與「全部音效：合成細節」; 混音器移到時間軸區
+ - tweak: demo 頁資源改用相對路徑, `npm run deploy` 以 @zbryikt/deploy 發佈到 GitHub Pages ( 只帶用到的檔案 )
  - tweak: demo 頁先畫畫面再分批產生聲音, 並在畫好前隱藏, 不再閃出空的模板
 
 

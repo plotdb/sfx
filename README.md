@@ -8,6 +8,7 @@
  - 離線混音：把時間軸混成一段音訊 ( 輸出影片配音用 )。
 
 試玩：`npm install`、`npx fedep`、`npm run build` 後 `npm start` ( 即 `npx server -r web -o true` )。
+線上版：https://plotdb.github.io/sfx/ ( `npm run deploy` 發佈到 gh-pages )。
 頁面原始碼在 `web/src/pug`，建置到 `web/static`：音效清單 ( 點了就播，🎲 隨機變化 )、可編輯的五線譜、每種合成聲的參數試聽，以及可以播放、拖曳、倍速並混成 wav 的時間軸。
 
 

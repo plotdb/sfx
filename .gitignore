@@ -5,3 +5,4 @@ web/static/assets/lib
 .*.swp
 .DS_Store
 .fedep
+/.deploy

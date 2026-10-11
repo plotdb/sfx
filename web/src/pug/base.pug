@@ -6,6 +6,8 @@ html(lang="zh-Hant")
     meta(charset="utf-8")
     meta(name="viewport",content="width=device-width,initial-scale=1")
     block prehead
+    //- 資源用相對路徑, 本機與 GitHub Pages ( plotdb.github.io/sfx/ ) 都能載入
+    - libLoader.root("assets/lib")
     +css([
     {name: "bootstrap", path: "css/bootstrap.min.css"},
     {name: "@loadingio/bootstrap.ext"}
