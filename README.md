@@ -93,17 +93,73 @@
 | `toggle` | 0.12s | | 開關 |
 | `type` | 0.05s | | 打字 ( 每次 seed 不同較自然 ) |
 | `thump` | 0.35s | | 落地、蓋章 |
+| `snap` | 0.1s | | 吸附、到位 |
 | `chime` | `dur` ( 1.4 ) | `note` ( E6 ) | 鈴聲、完成一步 |
 | `success` | 0.9s | | 成功 ( C-E-G 琶音 ) |
 | `notify` | 0.7s | | 通知 |
+| `error` | 0.5s | `from` ( B3 )、`to` ( F3 ) | 錯誤 |
+| `reveal` | 1.6s | `notes` ( [C6, E6, G6, C7, E7] )、`gap` ( 0.06 ) | 揭曉 ( 預設 `reverb: 0.35` ) |
+| `correct` | 自動 | `style` ( pingpong「叮咚」\| arp 琶音 )、`notes`、`gap` | 答對 |
+| `wrong` | 自動 | `style` ( buzzer「噗噗」\| trombone 悲傷長號 )、`pitch` ( 140 ) | 答錯 |
 | `whoosh` | `dur` ( 0.7 ) | `from` ( 400 )、`peak` ( 2600 )、`to` ( 600 )、`at` ( 0.45 )、`q` ( 1.2 ) | 轉場 |
 | `swell` | `dur` ( 2 ) | | 段落前的醞釀 |
-| `pluck` | `dur` ( 2.5 ) | `note` ( A3 )、`bright` ( 0~1 )、`slide` ( 半音 ) | 撥弦 ( 類古箏 ) |
-| `melody` | 自動 | `notes: [[t, note, dur, vel], ...]`、`bright`、`slide` | 撥弦旋律 |
-| `drone` | `dur` ( 8 ) | `notes` ( [A1, E2, A2] )、`attack`、`release` | 持續低音 |
+| `slide` | `dur` ( 0.3 ) | `from` ( 900 )、`to` ( 2600 )、`q` ( 0.9 )、`dir` ( 1 往右，-1 往左 ) | 滑入、滑出 |
+| `rise` / `fall` | `dur` ( 0.6 ) | `from`、`to` ( Hz 或音名；300→900 / 900→250 ) | 數值上升 / 下降 |
+| `count` | `dur` + 0.2 | `n` ( 12 )、`dur` ( 1.2 )、`ease` ( out \| in \| linear )、`climb` ( 7 半音 )、`note` ( C6 ) | 數字滾動 |
+| `draw` | `dur` ( 1 ) | `rough` ( 0~1 )、`pitch` ( 2500 ) | 筆畫 |
+| `glitch` | `dur` ( 0.5 ) | | 故障 |
+| `sweep` | `dur` ( 1 ) | `wave` ( sine \| triangle \| square \| saw \| noise )、`from` ( 200 )、`to` ( 2000 )、`curve` ( exp \| lin )、`q`、`attack`、`release` | 通用掃頻 |
+| `tension` | `dur` ( 6 ) | `note` ( A2 ) | 緊張 |
+| `heartbeat` | `dur` ( 4 ) | `bpm` ( 70 ) | 心跳 |
+| `clock` | `dur` ( 4 ) | `bpm` ( 60 ) | 時鐘 |
+| `fingersnap` | 0.12s | `tone` ( 手掌共鳴 3200Hz ) | 打響指 |
+| `huh` | `dur` ( 0.45 ) | `pitch` ( 200 )、`rise` ( 上揚倍數 1.9 )、`size` | 蛤? |
+| `yay` | `dur` ( 0.5 ) | `pitch` ( 300 )、`size` | 耶! |
+| `paper` | `dur` ( 1.2 ) | `crisp` ( 劈啪聲，0 軟紙 ~ 3 硬紙 )、`flutter` ( 紙張抖動 0~1 ) | 翻頁 |
+| `water` | 自動 | `n` ( 氣泡數，1 為水滴 )、`size` ( 平均半徑 mm，越大越低 )、`rise` ( 音高上升 ) | 水滴、冒泡、溪流 |
+| `fire` | `dur` ( 6 ) | `density` ( 1 ) | 火 |
+| `steps` | 自動 | `surface` ( wood \| concrete \| gravel \| snow \| grass )、`gait` ( walk \| run )、`n` ( 4 )、`pace` ( 走 0.5 / 跑 0.3 ) | 腳步 |
+| `bell` | `dur` ( 5 ) | `note` ( C5 ) | 教堂鐘、管鐘 ( 預設 `reverb: 0.2` ) |
+| `thunder` | `dur` ( 6 ) | `dist` ( 0 近 ~ 1 遠 ) | 雷 |
 | `wind` | `dur` ( 6 ) | `cutoff` ( 900 ) | 風 |
 | `rain` | `dur` ( 6 ) | `density` ( 0.02 ) | 雨 |
 | `buzz` | `dur` ( 1.5 ) | `freq` ( 220 ) | 昆蟲振翅 |
+| `pluck` | `dur` ( 2.5 ) | `note` ( A3 )、`bright` ( 0~1 )、`slide` ( 半音 ) | 撥弦 ( 類古箏 ) |
+| `guitar` | `dur` ( 3 ) | `note` ( E3 ) 或 `chord` ( C D Dm E Em F G A Am ) 或 `notes`、`strum` ( 0.03 )、`dir` ( down \| up )、`bright`、`pos` ( 撥弦位置 0.2 )、`mute` ( 0~1 ) | 吉他 |
+| `marimba` | `dur` ( 1.5 ) | `note` ( C4 )、`hard` ( 槌子硬度 0~1 ) | 馬林巴 |
+| `xylophone` | `dur` ( 0.8 ) | `note` ( C5 )、`hard` | 木琴 |
+| `vibraphone` | `dur` ( 3 ) | `note` ( F4 )、`hard`、`trem` ( 顫音深度 0.35 ) | 鐵琴 |
+| `glockenspiel` | `dur` ( 2 ) | `note` ( C6 )、`hard` | 鐘琴 |
+| `melody` | 自動 | `notes: [[t, note, dur, vel], ...]`、`instrument` ( pluck )、`bright`、`slide` | 旋律 |
+| `drone` | `dur` ( 8 ) | `notes` ( [A1, E2, A2] )、`attack`、`release` | 持續低音 |
+| `kick` | 自動 | `tune` ( 50 Hz )、`decay` ( 0.3 )、`punch` ( 0~1 ) | 大鼓 |
+| `snare` | 自動 | `tune` ( 180 Hz )、`decay` ( 0.15 )、`snappy` ( 0~1 ) | 小鼓 |
+| `hihat` | 自動 | `open` ( 0 閉 ~ 1 開 )、`tune` ( 1 ) | hi-hat |
+| `tom` | 自動 | `note` ( A2 )、`decay` ( 0.35 ) | 中鼓 / 落地鼓 |
+| `clap` | 自動 | `decay` ( 0.12 ) | 拍手 |
+| `crash` | 自動 | `decay` ( 尾音倍數，1 約 2 秒 )、`tune` ( 1 ) | 碎音鈸 |
+| `ride` | 自動 | `decay` ( 尾音倍數，1 約 3 秒 )、`bell` ( 0~1，越大越靠近鈸心 )、`tune` ( 1 ) | 疊音鈸 |
+| `beat` | 自動 | `pattern`、`bpm` ( 100 )、`bars` ( 1 )、`swing` ( 0~1 ) | 節奏 |
+
+擬音、鈸與人聲 ( `crash` `ride` `thunder` `steps` `paper` `water` `fingersnap` `huh` `yay` ) 依 Wikimedia Commons 上的錄音分析調整過頻譜分布、衰減曲線、音高與共振峰。
+
+人聲 ( `huh` `yay` ) 以共振峰合成：聲帶脈衝與氣音經過 4 個會移動的共振峰。`size` 是聲道大小 ( 小孩約 1.15，大人男聲約 0.9 )。聽得出是人聲，但偏卡通，不像真人錄音。
+
+全部的合成聲都可以加 `reverb` ( 0~1，濕聲比例 ) 與 `room` ( 0~1，空間大小 )，聲音會多出殘響的尾巴。
+已經有的 `AudioBuffer` 也可以用 `S.reverb(buffer, {mix, room})` 加殘響。
+
+`melody` 的 `instrument` 可以是任何有 `note` 參數的聲音：`pluck` ( 預設 )、`guitar`、`marimba`、`xylophone`、`vibraphone`、`glockenspiel`、`chime`、`bell`。
+
+`beat` 的 `pattern` 一個字元是一格十六分音符：`X` 重音、`x` 一般、`o` 輕，其他字元 ( `.`、`-` ) 是休止，空白與 `|` 忽略。
+
+    S.synth.beat({bpm: 96, bars: 2, swing: 0.3, pattern: {
+      kick:  'x.......x.x.....',
+      snare: '....x.......x..o',
+      hihat: 'x.x.x.x.x.x.x.x.',
+      tom:   ['..............x.', {note: 'D3'}]   // 也可以給 [pattern, 參數]
+    }})
+
+名稱可以是 `kick` `snare` `hihat` `ohat` ( 開 hi-hat ) `tom` `ltom` `htom` `clap` `crash` `ride`，或任何合成聲的名稱。
 
 `whoosh` 是帶通濾波的雜訊，中心頻率依 `from` → `peak` → `to` 走，在 `at` ( 0~1 ) 處最亮最響：
 

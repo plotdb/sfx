@@ -352,20 +352,37 @@ do ->
     buf.copyToChannel R, 1
     buf
 
-  # 二階濾波 ( RBJ biquad ), 對 Float32Array 原地處理
-  biquad = (d, type, f, q = 0.707) ->
-    w = 2 * Math.PI * f / SR
+  # 二階濾波 ( RBJ biquad ) 的係數
+  coef = (type, f, q) ->
+    w = 2 * Math.PI * Math.min(f, SR * 0.49) / SR
     cs = Math.cos w; al = Math.sin(w) / (2 * q)
-    [b0, b1, b2, a0, a1, a2] = switch type
+    switch type
     | \lp => [(1 - cs) / 2, 1 - cs, (1 - cs) / 2, 1 + al, -2 * cs, 1 - al]
     | \hp => [(1 + cs) / 2, -(1 + cs), (1 + cs) / 2, 1 + al, -2 * cs, 1 - al]
     | otherwise => [al, 0, -al, 1 + al, -2 * cs, 1 - al]
+
+  # 二階濾波, 對 Float32Array 原地處理
+  biquad = (d, type, f, q = 0.707) ->
+    [b0, b1, b2, a0, a1, a2] = coef type, f, q
     x1 = x2 = y1 = y2 = 0
     for i from 0 til d.length
       x = d[i]
       y = (b0 * x + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2) / a0
       x2 = x1; x1 = x; y2 = y1; y1 = y
       d[i] = y
+    d
+
+  # 時變的二階濾波: 頻率 fc(u) ( u: 0~1 為進度 ) 每 32 個樣本更新一次係數, 濾波狀態連續 ( 段落之間不會有接縫雜音 )
+  biquad-tv = (d, type, fc, q = 0.707) ->
+    n = d.length
+    x1 = x2 = y1 = y2 = 0
+    for s from 0 til n by 32
+      [b0, b1, b2, a0, a1, a2] = coef type, fc(s / n), q
+      for i from s til Math.min(n, s + 32)
+        x = d[i]
+        y = (b0 * x + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2) / a0
+        x2 = x1; x1 = x; y2 = y1; y1 = y
+        d[i] = y
     d
 
   noise = (n, r) -> d = new Float32Array n; (for i from 0 til n => d[i] = r! * 2 - 1); d
@@ -437,17 +454,11 @@ do ->
     f0 = o.from or 400; f1 = o.peak or 2600; f2 = o.to or 600; at = o.at or 0.45; q = o.q or 1.2
     make dur, (L, R, n) ->
       r = rng(o.seed or 3)
-      nz = noise n, r
-      d = new Float32Array n
-      seg = 256
-      for s from 0 til n by seg
-        u = s / n
-        fc = if u < at => f0 + (f1 - f0) * (u / at) else f1 + (f2 - f1) * ((u - at) / (1 - at))
-        part = biquad nz.slice(s, s + seg), \bp, fc, q
-        # 音量包絡: 在 at 處最大
-        for i from 0 til part.length
-          v = (s + i) / n
-          d[s + i] = part[i] * (if v < at => Math.sin(Math.PI / 2 * v / at) else Math.cos(Math.PI / 2 * (v - at) / (1 - at)))
+      d = biquad-tv noise(n, r), \bp, ((u) -> if u < at => f0 + (f1 - f0) * (u / at) else f1 + (f2 - f1) * ((u - at) / (1 - at))), q
+      # 音量包絡: 在 at 處最大
+      for i from 0 til n
+        v = i / n
+        d[i] *= if v < at => Math.sin(Math.PI / 2 * v / at) else Math.cos(Math.PI / 2 * (v - at) / (1 - at))
       for i from 0 til n => L[i] = d[i] * (1 - i / n * 0.6); R[i] = d[i] * (0.4 + i / n * 0.6)
   synth.type = (o = {}) -> synth.click {freq: 1200 + 600 * rng(o.seed or 11)!, seed: o.seed}
   # 低沉的落地 / 蓋章: 130 -> 70 Hz 掃頻 + 紙張雜訊
@@ -462,7 +473,10 @@ do ->
     pan L, R, d, o.pan
   # 撥弦 ( Karplus-Strong ), 起音時往上滑 ( 類古箏 )
   synth.pluck = (o = {}) ->
-    f = S.freq(o.note or 'A3'); dur = o.dur or 2.5; bright = if o.bright? => o.bright else 0.6; slide = if o.slide? => o.slide else 0.6
+    f = S.freq(o.note or 'A3'); dur = o.dur or 2.5
+    # 注意: 同一行的 `if ... else x; y = ...` 會把 y 吞進 else, 要分行寫
+    bright = if o.bright? => o.bright else 0.6
+    slide = if o.slide? => o.slide else 0.6
     make dur, (L, R, n) ->
       r = rng(o.seed or 13)
       period = SR / f
@@ -538,22 +552,841 @@ do ->
     dur = o.dur or 2
     make dur, (L, R, n) ->
       r = rng(o.seed or 23)
-      nz = noise n, r
-      seg = 512
-      for s from 0 til n by seg
-        u = s / n
-        part = biquad nz.slice(s, s + seg), \bp, 300 + 3000 * u * u, 0.9
-        for i from 0 til part.length => L[s + i] = R[s + i] = part[i] * u * u
-  # 簡單旋律: notes [[t, note, dur?, vel?]] 以撥弦演奏
+      d = biquad-tv noise(n, r), \bp, ((u) -> 300 + 3000 * u * u), 0.9
+      for i from 0 til n => u = i / n; L[i] = R[i] = d[i] * u * u
+  # 簡單旋律: notes [[t, note, dur?, vel?]], instrument 為任一有 note 參數的合成聲 ( 預設 pluck 撥弦 )
   synth.melody = (o = {}) ->
     seq = o.notes or []
     dur = o.dur or (Math.max(...seq.map((x) -> x.0 + (x.2 or 1.5))) + 1)
-    voices = seq.map (x, k) -> [x, synth.pluck({note: x.1, dur: (x.2 or 1.5) + 0.8, bright: o.bright, slide: o.slide, seed: 31 + k})]
+    inst = o.instrument or \pluck
+    if !synth[inst] => inst = \pluck
+    voices = seq.map (x, k) ->
+      opt = if inst == \pluck => {bright: o.bright, slide: o.slide} else {}
+      [x, synth[inst]({note: x.1, dur: (x.2 or 1.5) + 0.8, seed: 31 + k} <<< opt)]
     make dur, (L, R, n) ->
-      for [[t, note, d, vel], b] in voices
-        l = b.getChannelData 0; r_ = b.getChannelData 1
+      for [[t, note, d, vel], b] in voices => place L, R, b, t, (vel or 0.8)
+
+  # ---------------------------------------------------------------- 共用的小工具
+  # 把 AudioBuffer 疊進 L / R ( 從 t 秒開始, 乘上 g )
+  place = (L, R, b, t, g = 1) ->
+    l = b.getChannelData 0; r_ = b.getChannelData 1
+    o0 = Math.round t * SR
+    for i from Math.max(0, -o0) til Math.min(l.length, L.length - o0) => L[o0 + i] += l[i] * g; R[o0 + i] += r_[i] * g
+
+  # 疊一個衰減的正弦 ( 泛音 ): at 秒開始, 頻率 f, 振幅 amp, 衰減時間常數 dec, 起音 att
+  partial = (d, at, f, amp, dec, att = 0.001) ->
+    if f >= SR * 0.45 => return d
+    o0 = Math.round at * SR
+    w = 2 * Math.PI * f / SR
+    for i from Math.max(0, o0) til d.length
+      k = i - o0; t = k / SR
+      a = amp * env(t, att, dec)
+      if t > att and a < 1e-5 => break
+      d[i] += a * Math.sin(w * k)
+    d
+
+  # 結尾淡出 ( 避免截斷的爆音 )
+  fade-out = (d, sec = 0.02) ->
+    m = Math.min d.length, Math.round(sec * SR)
+    for i from 0 til m => d[d.length - 1 - i] *= i / m
+    d
+
+  # 平滑的隨機曲線 ( 0~1 ), 每 every 秒一個控制點, 線性內插
+  wander = (n, every, r) ->
+    step = Math.max 1, Math.round(every * SR)
+    pts = [r! for k from 0 to Math.ceil(n / step) + 1]
+    d = new Float32Array n
+    for i from 0 til n
+      k = Math.floor(i / step); u = (i % step) / step
+      d[i] = pts[k] * (1 - u) + pts[k + 1] * u
+    d
+
+  # 正弦掃頻 ( 指數曲線 ): f(u) 由 f0 到 f1
+  glide-osc = (n, f0, f1, harm = [1]) ->
+    d = new Float32Array n; ph = 0
+    for i from 0 til n
+      ph += 2 * Math.PI * f0 * Math.pow(f1 / f0, i / n) / SR
+      for a, k in harm => d[i] += a * Math.sin(ph * (k + 1))
+    d
+
+  # ---------------------------------------------------------------- 殘響 ( Freeverb: 8 個梳狀濾波 + 4 個全通濾波 )
+  COMB = [1116 1188 1277 1356 1422 1491 1557 1617]
+  ALLPASS = [556 441 341 225]
+  reverb = (buf, mix = 0.3, room = 0.5) ->
+    k = SR / 44100
+    src = [buf.getChannelData(0), buf.getChannelData(1)]
+    m = buf.length
+    make buf.duration + 0.4 + room * 3, (L, R, n) ->
+      fb = 0.7 + 0.27 * room; damp = 0.3
+      input = new Float32Array n
+      for i from 0 til m => input[i] = (src.0[i] + src.1[i]) * 0.015
+      for out, ch in [L, R]
+        wet = new Float32Array n
+        for c in COMB
+          len = Math.round((c + ch * 23) * k); line = new Float32Array len; idx = 0; filt = 0
+          for i from 0 til n
+            y = line[idx]
+            filt = y * (1 - damp) + filt * damp
+            line[idx] = input[i] + filt * fb
+            idx = (idx + 1) % len
+            wet[i] += y
+        for c in ALLPASS
+          len = Math.round((c + ch * 23) * k); line = new Float32Array len; idx = 0
+          for i from 0 til n
+            b = line[idx]; v = wet[i]
+            line[idx] = v + b * 0.5
+            wet[i] = b - v
+            idx = (idx + 1) % len
+        dry = src[ch]
+        for i from 0 til n => out[i] = (if i < m => dry[i] * (1 - mix * 0.5) else 0) + wet[i] * mix * 3
+  S.reverb = (buf, o = {}) -> reverb buf, (if o.mix? => o.mix else 0.3), (if o.room? => o.room else 0.5)
+
+  # ---------------------------------------------------------------- 動作音
+  # 滑入 / 滑出: 帶通雜訊由 from 掃到 to, 左右跟著 dir ( 1 往右, -1 往左 ) 移動
+  synth.slide = (o = {}) ->
+    dur = o.dur or 0.3; f0 = o.from or 900; f1 = o.to or 2600; q = o.q or 0.9
+    dir = if o.dir? => o.dir else 1
+    make dur, (L, R, n) ->
+      d = biquad-tv noise(n, rng(o.seed or 37)), \bp, ((u) -> f0 * Math.pow(f1 / f0, u)), q
+      for i from 0 til n
+        u = i / n
+        a = if u < 0.25 => Math.sin(Math.PI / 2 * u / 0.25) else Math.pow(Math.cos(Math.PI / 2 * (u - 0.25) / 0.75), 2)
+        p = (u * 2 - 1) * 0.6 * dir
+        L[i] = d[i] * a * Math.cos((p + 1) * Math.PI / 4)
+        R[i] = d[i] * a * Math.sin((p + 1) * Math.PI / 4)
+  # 音高滑動 ( 數值上升 / 下降 )
+  glide = (o, d0, d1) ->
+    dur = o.dur or 0.6; f0 = S.freq(o.from or d0); f1 = S.freq(o.to or d1)
+    make dur, (L, R, n) ->
+      d = glide-osc n, f0, f1, [1, 0.25, 0.08]
+      for i from 0 til n
+        t = i / SR
+        d[i] *= Math.min(1, t / 0.02) * Math.min(1, (dur - t) / (dur * 0.35))
+      pan L, R, d, o.pan
+  synth.rise = (o = {}) -> glide o, 300, 900
+  synth.fall = (o = {}) -> glide o, 900, 250
+  # 數字滾動: n 個 tick, 音高爬升 climb 個半音; ease: out ( 越來越慢 ) | in | linear; 最後一下加重
+  synth.count = (o = {}) ->
+    cnt = Math.max 2, (o.n or 12); dur = o.dur or 1.2; f = S.freq(o.note or 'C6')
+    climb = if o.climb? => o.climb else 7
+    ease = switch o.ease
+    | \in => (u) -> u * u
+    | \linear => (u) -> u
+    | otherwise => (u) -> 1 - (1 - u) * (1 - u)
+    make dur + 0.2, (L, R, n) ->
+      d = new Float32Array n
+      for k from 0 til cnt
+        u = k / (cnt - 1)
+        last = k == cnt - 1
+        ff = f * Math.pow(2, climb * u / 12)
+        partial d, dur * ease(u), ff, (if last => 1 else 0.6), (if last => 0.09 else 0.02)
+        if last => partial d, dur, ff * 2, 0.3, 0.06
+      pan L, R, d, o.pan
+  # 吸附、到位
+  synth.snap = (o = {}) -> make 0.1, (L, R, n) ->
+    nz = biquad noise(n, rng(o.seed or 41)), \lp, 6000
+    d = new Float32Array n
+    for i from 0 til n
+      t = i / SR
+      d[i] = 0.8 * nz[i] * env(t, 0.0003, 0.002) + 0.6 * Math.sin(2 * Math.PI * 1400 * t) * env(t, 0.0005, 0.01) + Math.sin(2 * Math.PI * 160 * t) * env(t, 0.001, 0.025)
+    pan L, R, d, o.pan
+  # 筆畫: 帶通雜訊, 力道隨機起伏; rough 越大顆粒越明顯; pitch 為筆尖的音色 ( Hz )
+  synth.draw = (o = {}) ->
+    dur = o.dur or 1; rough = if o.rough? => o.rough else 0.5
+    make dur, (L, R, n) ->
+      r = rng(o.seed or 43)
+      d = biquad biquad(noise(n, r), \bp, (o.pitch or 2500), 0.8), \hp, 600
+      speed = wander n, 0.06, r
+      grain = wander n, 0.004, r
+      for i from 0 til n
+        t = i / SR
+        g = grain[i] * grain[i]
+        d[i] *= (0.3 + 0.7 * speed[i]) * (1 - rough + rough * g * 2) * Math.min(1, t / 0.03, (dur - t) / 0.05)
+      pan L, R, d, o.pan
+  # 故障: 一段段隨機的方波 / 降取樣雜訊 / 靜音
+  synth.glitch = (o = {}) ->
+    dur = o.dur or 0.5
+    make dur, (L, R, n) ->
+      r = rng(o.seed or 47)
+      i = 0
+      while i < n
+        len = Math.round((0.015 + 0.05 * r!) * SR)
+        kind = r!
+        f = 100 + 1900 * r! * r!
+        hold = 1 + Math.floor(r! * 40)
+        p = r! * 1.6 - 0.8
+        gl = Math.cos((p + 1) * Math.PI / 4); gr = Math.sin((p + 1) * Math.PI / 4)
+        v = 0
+        for j from i til Math.min(n, i + len)
+          t = (j - i) / SR
+          x = if kind < 0.4 => (if Math.sin(2 * Math.PI * f * t) > 0 => 0.6 else -0.6)
+          else if kind < 0.8 => (if (j - i) % hold == 0 => v = r! * 2 - 1 else v)
+          else 0
+          L[j] = x * gl; R[j] = x * gr
+        i += len
+
+  # ---------------------------------------------------------------- 敘事
+  # 揭曉: 快速上行的鐘琴琶音 + 高頻閃光 ( 預設帶殘響 )
+  synth.reveal = (o = {}) ->
+    notes = (o.notes or <[C6 E6 G6 C7 E7]>).map S.freq
+    gap = if o.gap? => o.gap else 0.06
+    make 1.6, (L, R, n) ->
+      d = new Float32Array n
+      for f, k in notes
+        partial d, k * gap, f, 1, 0.5
+        partial d, k * gap, f * 2.76, 0.25, 0.15
+      sh = biquad noise(n, rng(o.seed or 53)), \hp, 6000
+      for i from 0 til n
+        t = i / SR
+        d[i] += sh[i] * 0.12 * env(t, 0.25, 0.3)
+      pan L, R, d, o.pan
+  synth.reveal.reverb = 0.35
+  # 錯誤: 兩個往下的柔和方波音 ( 預設三全音 )
+  synth.error = (o = {}) ->
+    notes = [S.freq(o.from or 'B3'), S.freq(o.to or 'F3')]
+    make 0.5, (L, R, n) ->
+      d = new Float32Array n
+      for f, k in notes
+        for h from 1 to 7 by 2 => partial d, k * 0.16, f * h, 1 / h, 0.12, 0.005
+      fade-out biquad(d, \lp, 2000)
+      pan L, R, d, o.pan
+  # 緊張: 小二度與三全音的音簇, 顫音漸快, 漸強
+  synth.tension = (o = {}) ->
+    dur = o.dur or 6; f = S.freq(o.note or 'A2')
+    make dur, (L, R, n) ->
+      for ratio, k in [1, Math.pow(2, 1 / 12), Math.pow(2, 6 / 12), 2]
+        d = new Float32Array n; ph = 0; tp = 0
+        for i from 0 til n
+          t = i / SR; u = t / dur
+          tp += 2 * Math.PI * (3 + 5 * u) / SR
+          ph += 2 * Math.PI * f * ratio / SR
+          d[i] = (Math.sin(ph) + 0.3 * Math.sin(ph * 2) + 0.15 * Math.sin(ph * 3)) * (1 - 0.35 * (0.5 + 0.5 * Math.sin(tp + k))) * Math.pow(u, 1.5) * Math.min(1, (dur - t) / 0.3)
+        pan L, R, d, (k - 1.5) * 0.4, 0.5
+  # 心跳: bpm, 每拍 lub-dub
+  synth.heartbeat = (o = {}) ->
+    dur = o.dur or 4; period = 60 / (o.bpm or 70)
+    make dur, (L, R, n) ->
+      d = new Float32Array n
+      t = 0.05
+      while t < dur - 0.2
+        for [at, f0, f1, a] in [[0, 75, 45, 1], [Math.min(0.3, period * 0.35), 85, 55, 0.7]]
+          m = Math.round(0.25 * SR); o0 = Math.round((t + at) * SR)
+          b = glide-osc m, f0, f1
+          for i from 0 til Math.min(m, n - o0) => d[o0 + i] += b[i] * a * env(i / SR, 0.008, 0.06)
+        t += period
+      pan L, R, biquad(d, \lp, 300), o.pan
+  # 時鐘: bpm, tick / tock 交替
+  synth.clock = (o = {}) ->
+    dur = o.dur or 4; period = 60 / (o.bpm or 60)
+    make dur, (L, R, n) ->
+      d = new Float32Array n
+      nz = biquad noise(n, rng(o.seed or 59)), \hp, 2000
+      k = 0; t = 0.02
+      while t < dur - 0.05
+        f = if k % 2 => 2400 else 3200
+        partial d, t, f, 0.6, 0.012
+        partial d, t, f * 1.5, 0.3, 0.006
         o0 = Math.round t * SR
-        for i from 0 til Math.min(l.length, n - o0) => L[o0 + i] += l[i] * (vel or 0.8); R[o0 + i] += r_[i] * (vel or 0.8)
+        for i from 0 til Math.min(Math.round(0.002 * SR), n - o0) => d[o0 + i] += nz[o0 + i] * 0.8
+        t += period; k++
+      pan L, R, d, o.pan
+
+  # ---------------------------------------------------------------- 擬音
+  # 一顆短促的顆粒 ( 劈啪 / 碎石 ): 長度 len 秒的雜訊, 帶通 fc, 指數衰減, 疊進 L / R
+  grain = (L, R, r, at, len, fc, q, amp, p = 0) ->
+    m = Math.max 4, Math.round(len * SR)
+    g = noise m, r
+    biquad g, \bp, fc, q
+    o0 = Math.round at * SR
+    gl = Math.cos((p + 1) * Math.PI / 4) * amp; gr = Math.sin((p + 1) * Math.PI / 4) * amp
+    for i from 0 til Math.min(m, L.length - o0)
+      e = Math.exp(-4 * i / m) * Math.min(1, i / 8)
+      L[o0 + i] += g[i] * e * gl; R[o0 + i] += g[i] * e * gr
+  # 依權重函式 w(u) ( u: 0~1 ) 抽一個時間點 ( 拒絕取樣 )
+  pick = (r, w) ->
+    for k from 0 til 50
+      u = r!
+      if r! < w(u) => return u
+    r!
+
+  # 翻頁 ( 依三段錄音約 10 次翻頁的分析: 250Hz~6kHz 大致平坦, 8kHz 以上滾降; 音量有不規則的起伏 ( 紙張抖動 ) )
+  #  - 掀起: 手指拖過紙緣, 偏高頻的小聲摩擦
+  #  - 翻動: 寬頻的粉紅雜訊, 8~25Hz 的不規則抖動, 彎折時的劈啪聲
+  #  - 落下: 柔和的寬頻拍擊, 再慢慢收掉
+  #  - crisp: 劈啪聲的多寡 ( 0 柔軟的紙 ~ 3 硬挺的紙 ); flutter: 抖動的程度 ( 0~1 )
+  synth.paper = (o = {}) ->
+    dur = o.dur or 1.2
+    crisp = if o.crisp? => o.crisp else 1
+    flutter = if o.flutter? => o.flutter else 0.6
+    lift = dur * 0.2; land = dur * 0.8
+    make dur, (L, R, n) ->
+      r = rng(o.seed or 61)
+      # 翻動的音量: 漸強到 land, 中間有抖動
+      flip = (t) -> if t < lift * 0.5 or t > land + 0.02 => 0 else Math.pow(Math.min(1, (t - lift * 0.5) / (land - lift * 0.5)), 0.7)
+      fl = wander n, 0.035, r
+      fl2 = wander n, 0.09, r
+      for ch, c in [L, R]
+        p = pink n, r
+        sl = biquad noise(n, r), \bp, 4000, 0.7
+        for i from 0 til n
+          t = i / SR
+          shake = 1 - flutter + flutter * (fl[i] * 0.7 + fl2[i] * 0.6)
+          a = flip(t) * shake
+          # 掀起的摩擦
+          s = if t < lift => Math.sin(Math.PI / 2 * t / lift) * 0.25 else if t < land => 0.25 * Math.max(0, 1 - (t - lift) / (lift)) else 0
+          # 落下: 拍擊 + 收尾
+          d = if t >= land => env(t - land, 0.006, 0.07) * 1.1 + 0.25 * Math.max(0, 1 - (t - land) / (dur - land)) else 0
+          ch[i] = p[i] * (a * 0.8 + d) + sl[i] * s
+      # 彎折的劈啪聲 ( 翻動期間 )
+      for k from 0 til Math.round(50 * dur * crisp)
+        t = lift * 0.5 + (land - lift * 0.5) * pick(r, (u) -> 0.3 + 0.7 * u)
+        grain L, R, r, t, 0.0002 + 0.0008 * r!, 1500 * Math.pow(5, r!), 0.5, (0.1 + r! * r!) * 8, r! * 0.6 - 0.3
+      for ch in [L, R]
+        biquad ch, \hp, 150
+        biquad ch, \lp, 7500, 0.6
+        fade-out ch, 0.05
+  # 水: 氣泡模型 ( van den Doel ): 半徑 r mm 的氣泡音高 f0 = 3000 / r Hz, 衰減 d = 0.043 f0 + 0.0014 f0^1.5 ( 1/秒 ),
+  # 音高隨時間上升 f = f0 ( 1 + rise · d · t ). 一顆是水滴, 大量大小不一的氣泡是溪流 / 冒泡
+  #  - n: 氣泡數 ( 1 為水滴 ), size: 平均半徑 ( mm, 越大越低 ), rise: 音高上升的程度
+  #  - 水滴依錄音調整: 音高幾乎不滑 ( rise 0.05 ), 容器的共鳴讓尾音較長 ( 衰減只有公式的一半 )
+  bubble = (L, R, at, radius, amp, rise, p, damp = 1) ->
+    f0 = 3000 / radius
+    d = (0.043 * f0 + 0.0014 * Math.pow(f0, 1.5)) * damp
+    m = Math.min Math.round(6 / d * SR), L.length - Math.round(at * SR)
+    o0 = Math.round at * SR
+    gl = Math.cos((p + 1) * Math.PI / 4) * amp; gr = Math.sin((p + 1) * Math.PI / 4) * amp
+    ph = 0
+    for i from 0 til m
+      t = i / SR
+      ph += 2 * Math.PI * f0 * (1 + rise * d * t) / SR
+      v = Math.sin(ph) * Math.exp(-d * t) * Math.min(1, i / 24)
+      L[o0 + i] += v * gl; R[o0 + i] += v * gr
+  synth.water = (o = {}) ->
+    cnt = o.n or 1; rise = if o.rise? => o.rise else (if cnt == 1 => 0.05 else 0.1)
+    size = o.size or (if o.freq => 3000 / S.freq(o.freq) else (if cnt == 1 => 3 else 2.5))
+    dur = o.dur or (if cnt == 1 => 0.4 else Math.max(1, cnt * 0.04))
+    make dur, (L, R, n) ->
+      r = rng(o.seed or 67)
+      if cnt == 1
+        # 水滴: 落水的輕微撞擊, 接著一顆氣泡
+        grain L, R, r, 0.005, 0.001, 3000, 0.8, 0.25
+        bubble L, R, 0.007, size, 1, rise, 0, 0.4
+        bubble L, R, 0.012, size * 0.4, 0.12, rise, 0.1
+        return
+      for k from 0 til cnt
+        # 小氣泡多、大氣泡少
+        radius = size * (0.25 + 1.75 * Math.pow(r!, 2.5))
+        at = r! * (dur - 0.1)
+        bubble L, R, at, radius, Math.pow(radius / size, 0.7) * (0.3 + 0.7 * r!), rise * (0.5 + r!), r! * 1.4 - 0.7
+  # 火: 低沉起伏的底噪 + 隨機的劈啪聲; density 劈啪的多寡
+  synth.fire = (o = {}) ->
+    dur = o.dur or 6; density = if o.density? => o.density else 1
+    make dur, (L, R, n) ->
+      r = rng(o.seed or 71)
+      bed = biquad noise(n, r), \lp, 300
+      hiss = biquad noise(n, r), \hp, 3000
+      sw = wander n, 0.25, r
+      for i from 0 til n
+        a = (0.4 + 0.6 * sw[i]) * Math.min(1, i / SR / 0.3, (n - i) / SR / 0.3)
+        L[i] = R[i] = (bed[i] * 0.5 + hiss[i] * 0.04) * a
+      cnt = Math.round(dur * 10 * density)
+      for k from 0 til cnt
+        at = Math.round(r! * (n - 0.01 * SR)); amp = r! * r! * 1.5
+        len = Math.round((0.0005 + 0.003 * r!) * SR)
+        p = r! * 1.6 - 0.8
+        gl = Math.cos((p + 1) * Math.PI / 4); gr = Math.sin((p + 1) * Math.PI / 4)
+        for i from 0 til len
+          v = (r! * 2 - 1) * amp * (1 - i / len)
+          L[at + i] += v * gl; R[at + i] += v * gr
+  # 腳步: 每一步 = 腳跟落地, 隨後腳尖落地
+  #  - surface: wood ( 木地板 ) | concrete ( 水泥 / 磁磚 ) | gravel ( 碎石 ) | snow ( 雪 ) | grass ( 草地 )
+  #  - gait: walk ( 走, 腳跟 → 約 0.1 秒後腳尖 ) | run ( 跑, 前腳掌先著地, 兩下幾乎重疊, 較重, 蹬地時有摩擦 )
+  #  - n 步, 間隔 pace 秒 ( 走預設 0.5, 跑預設 0.3 ); 左右腳略微左右分開
+  #  - 水泥依錄音調整: 極短 ( 約 10ms 衰減 20dB ) 的中頻「喀」, 能量在 400~1400Hz, 幾乎沒有低頻
+  SURFACE =
+    wood: {thud: 1, tones: [140 380 620], click: [[2200, 1.2, 0.012, 0.5]]}
+    concrete: {thud: 0.04, tones: [], click: [[700, 0.8, 0.003, 1.6], [2600, 1.2, 0.002, 0.15]], scuff: 0.06}
+    gravel: {thud: 0.45, grains: 90, band: [1200, 6000], len: [0.0004, 0.002], q: 1.5}
+    snow: {thud: 0.35, grains: 70, band: [500, 2200], len: [0.002, 0.007], q: 0.8}
+    grass: {thud: 0.25, grains: 90, band: [2500, 8000], len: [0.0005, 0.003], q: 1.2}
+  synth.steps = (o = {}) ->
+    run = o.gait == \run
+    cnt = o.n or 4; pace = o.pace or (if run => 0.3 else 0.5)
+    sf = SURFACE[o.surface] or SURFACE.wood
+    make cnt * pace + 0.35, (L, R, n) ->
+      r = rng(o.seed or 73)
+      lp = biquad noise(n, r), \lp, 260
+      for k from 0 til cnt
+        T = 0.02 + k * pace + (r! - 0.5) * (if run => 0.01 else 0.02)
+        w = (if run => 1.15 else 0.85) + 0.3 * r!
+        p = if k % 2 => 0.12 else -0.12
+        gl = Math.cos((p + 1) * Math.PI / 4); gr = Math.sin((p + 1) * Math.PI / 4)
+        toe = if run => 0.025 + 0.015 * r! else 0.09 + 0.04 * r!
+        for [at, a] in (if run => [[0, w * 0.8], [toe, w]] else [[0, w], [toe, w * 0.55]])
+          o0 = Math.round((T + at) * SR)
+          m = Math.min Math.round(0.15 * SR), n - o0
+          d = new Float32Array m
+          for i from 0 til m
+            t = i / SR
+            d[i] = lp[o0 + i] * 2.5 * sf.thud * env(t, 0.003, 0.025) + 0.5 * sf.thud * Math.sin(2 * Math.PI * (75 + 20 * a) * t) * env(t, 0.002, 0.03)
+          for f in (sf.tones or []) => partial d, 0, f * (0.95 + 0.1 * r!), 0.12, 0.035
+          for [fc, q, dec, amp] in (sf.click or [])
+            c = biquad noise(m, r), \bp, fc * (0.85 + 0.3 * r!), q
+            for i from 0 til m => d[i] += c[i] * amp * env(i / SR, 0.0004, dec)
+          for i from 0 til m => L[o0 + i] += d[i] * a * gl; R[o0 + i] += d[i] * a * gr
+        # 鞋底與地面的摩擦 ( 跑步時在蹬地處, 較明顯 )
+        sc = (sf.scuff or 0.1) * (if run => 2.5 else 1)
+        if sf.scuff or run
+          o0 = Math.round((T + (if run => toe + 0.03 else 0.02)) * SR)
+          s = biquad noise(Math.round((if run => 0.07 else 0.12) * SR), r), \bp, 2800, 0.8
+          for i from 0 til Math.min(s.length, n - o0)
+            e = Math.sin(Math.PI * i / s.length) * sc * w * 0.3
+            L[o0 + i] += s[i] * e * gl; R[o0 + i] += s[i] * e * gr
+        # 顆粒地面: 踩下時一顆顆的嘎吱聲, 集中在腳跟與腳尖兩處
+        if sf.grains
+          for j from 0 til Math.round(sf.grains * w)
+            at = if r! < 0.6 => 0.07 * Math.pow(r!, 1.5) else toe + 0.09 * Math.pow(r!, 1.5)
+            [f0, f1] = sf.band; [l0, l1] = sf.len
+            grain L, R, r, T + at, l0 + (l1 - l0) * r!, f0 * Math.pow(f1 / f0, r!), sf.q, (0.15 + r! * r!) * 0.8 * w, p + r! * 0.3 - 0.15
+  # 鐘 ( 教堂鐘 / 管鐘 ): 不諧和的泛音, 低音 hum 留得最久; note 為敲擊音
+  synth.bell = (o = {}) ->
+    f = S.freq(o.note or 'C5'); dur = o.dur or 5
+    make dur, (L, R, n) ->
+      d = new Float32Array n
+      for [ratio, amp, dec] in [[0.5 0.5 1] [1 1 0.7] [1.2 0.55 0.5] [1.5 0.35 0.4] [2 0.6 0.35] [2.51 0.25 0.25] [2.66 0.2 0.22] [3.01 0.18 0.18] [4.17 0.1 0.12] [5.43 0.06 0.08]]
+        partial d, 0, f * ratio, amp, dec * dur * 0.45, 0.002
+        partial d, 0, f * ratio * 1.0015, amp * 0.5, dec * dur * 0.45, 0.002
+      pan L, R, fade-out(d, 0.1), o.pan
+  synth.bell.reverb = 0.2
+  # 粉紅雜訊 ( 每八度能量相同; Paul Kellet 的濾波 )
+  pink = (n, r) ->
+    d = new Float32Array n
+    b0 = b1 = b2 = b3 = b4 = b5 = b6 = 0
+    for i from 0 til n
+      w = r! * 2 - 1
+      b0 = 0.99886 * b0 + w * 0.0555179; b1 = 0.99332 * b1 + w * 0.0750759; b2 = 0.969 * b2 + w * 0.153852
+      b3 = 0.8665 * b3 + w * 0.3104856; b4 = 0.55 * b4 + w * 0.5329522; b5 = -0.7616 * b5 - w * 0.016898
+      d[i] = (b0 + b1 + b2 + b3 + b4 + b5 + b6 + w * 0.5362) * 0.11
+      b6 = w * 0.115926
+    d
+  # 雷 ( 依錄音分析: 近雷是 50Hz~8kHz 的寬頻撕裂聲, 接著數秒起伏的隆隆聲; 遠雷只剩 500Hz 以下 )
+  #  - dist: 0 ( 近 ) ~ 1 ( 遠 )
+  synth.thunder = (o = {}) ->
+    dur = o.dur or 6; dist = if o.dist? => o.dist else 0.5
+    near = 1 - dist
+    make dur, (L, R, n) ->
+      r = rng(o.seed or 79)
+      # 撕裂: 開頭幾次快速的爆發 ( 越近越多 ); 隆隆: 之後幾次緩慢的起伏
+      t0 = 0.02 + dist * 0.4
+      cracks = [[t0, 1]] ++ [[t0 + 0.7 * Math.pow(r!, 1.5), 0.4 + 0.6 * r!] for k from 0 til Math.round(2 + 5 * near)]
+      rolls = [[t0 + 0.3 + r! * dur * 0.5, 0.3 + 0.7 * r!] for k from 0 til 5]
+      ca = new Float32Array n; ra = new Float32Array n
+      for i from 0 til n
+        t = i / SR
+        for [at, g] in cracks => if t > at => ca[i] += g * env(t - at, 0.004, 0.1 + 0.25 * dist)
+        for [at, g] in rolls => if t > at => ra[i] += g * env(t - at, 0.15 + 0.4 * dist, 0.7 + dist)
+        fo = Math.min(1, (dur - t) / 0.6)
+        ca[i] *= fo; ra[i] *= fo
+      lpf = 400 + 11000 * near * near
+      for ch in [L, R]
+        p = biquad biquad(pink(n, r), \lp, lpf), \hp, 30
+        b = biquad biquad(noise(n, r), \lp, 140), \lp, 140
+        for i from 0 til n
+          ch[i] = p[i] * (ca[i] * (0.4 + 0.6 * near) + ra[i] * 0.8 * near) + b[i] * ra[i] * (0.6 + 0.4 * dist) * 3 + b[i] * ca[i] * 2
+      # 近雷的劈啪聲
+      for k from 0 til Math.round(300 * near * near)
+        at = t0 + 1.2 * Math.pow(r!, 2)
+        grain L, R, r, at, 0.0003 + 0.002 * r!, 800 + 5000 * r!, 1, (0.1 + r! * r!) * near * 0.8, r! * 1.4 - 0.7
+
+  # ---------------------------------------------------------------- 人體與人聲
+  # 響指 ( 依錄音分析: 1ms 內衰減 10dB 的爆裂, 手掌共鳴約 3.2kHz, 能量在 3~8kHz; 手指打到掌心有一點 200Hz 的悶聲 )
+  synth.fingersnap = (o = {}) -> make 0.12, (L, R, n) ->
+    r = rng(o.seed or 137)
+    tone = o.tone or 3200
+    d = new Float32Array n
+    nz = noise n, r
+    crack = biquad Float32Array.from(nz), \hp, 5000
+    res = biquad Float32Array.from(nz), \bp, tone, 5
+    for i from 0 til n
+      t = i / SR
+      d[i] = crack[i] * 2.5 * env(t, 0.0001, 0.0015) + res[i] * 2.2 * env(t, 0.0002, 0.0025)
+    partial d, 0, tone * 1.1, 0.12, 0.004
+    partial d, 0.0005, 200 + 30 * r!, 0.02, 0.008, 0.001
+    pan L, R, d, o.pan
+
+  # 共振峰合成 ( Klatt 式 ): 聲帶脈衝 ( 諧波, 約 -6dB/八度 ) + 氣音, 經過串接的 4 個會移動的共振峰
+  #  - track(u) ( u: 0~1 ) 回傳 {f0, voice ( 有聲的量 ), asp ( 氣音的量 ), F: [F1, F2, F3, F4], amp}
+  #  - size: 聲道大小 ( 共振峰倍數, 小孩約 1.15, 大人男聲約 0.9 )
+  formant-voice = (n, r, size, track) ->
+    src = new Float32Array n
+    ph = 0; jit = 0
+    tr = []
+    for s from 0 til n by 32 => tr.push track(s / n)
+    for i from 0 til n
+      p = tr[i .>>. 5]
+      jit := jit * 0.999 + (r! - 0.5) * 0.002
+      f0 = p.f0 * (1 + 0.006 * Math.sin(2 * Math.PI * 5.2 * i / SR) + jit)
+      ph += f0 / SR
+      ph -= Math.floor ph
+      v = 0
+      if p.voice > 0
+        K = Math.min 40, Math.floor(5000 / f0)
+        for k from 1 to K => v += Math.sin(2 * Math.PI * k * ph) / k
+      # 氣音隨聲門開合起伏
+      a = (r! * 2 - 1) * p.asp * (if p.voice > 0 => 0.6 + 0.4 * Math.sin(2 * Math.PI * ph) else 1)
+      src[i] = (v * p.voice * 0.35 + a) * p.amp
+    # 串接的共振峰 ( 二階共振, 頻寬隨頻率增加 )
+    for j from 0 til 4
+      y1 = y2 = 0
+      for s from 0 til n by 32
+        F = tr[s .>>. 5].F[j] * size
+        B = 60 + F * 0.06
+        rr = Math.exp(-Math.PI * B / SR)
+        c = -rr * rr; b = 2 * rr * Math.cos(2 * Math.PI * F / SR); a = 1 - b - c
+        for i from s til Math.min(n, s + 32)
+          y = a * src[i] + b * y1 + c * y2
+          y2 = y1; y1 = y; src[i] = y
+    src
+  mix = (a, b, u) -> a + (b - a) * u
+  ease = (u) -> u * u * (3 - 2 * u)
+  # 蛤? ( 依錄音分析: 約 0.08 秒的 /h/ 氣音, 接著母音 [a] ( F1 約 850, F2 約 1250 ); 音高大幅上揚, 約翻倍 )
+  #  - pitch: 起始音高 ( 預設 200 ), rise: 上揚的倍數 ( 預設 1.9 ), size: 聲道大小
+  synth.huh = (o = {}) ->
+    dur = o.dur or 0.45; f0 = o.pitch or 200; rise = o.rise or 1.9; size = o.size or 1
+    h = 0.08 / dur
+    make dur, (L, R, n) ->
+      r = rng(o.seed or 151)
+      d = formant-voice n, r, size, (u) ->
+        v = Math.max(0, Math.min(1, (u - h) / 0.08))
+        w = Math.max 0, (u - h) / (1 - h)
+        amp = Math.min(1, u / 0.06) * (if u > 0.75 => Math.max(0, 1 - (u - 0.75) / 0.25) else 1)
+        {f0: f0 * mix(1, rise, Math.pow(w, 1.6)), voice: v, asp: 0.35 * (1 - v) + 0.06, amp, F: [mix(700, 850, v), 1250, 2700, 3600]}
+      fade-out d, 0.03
+      pan L, R, d, o.pan
+  # 耶! ( 依錄音分析: 由 [j] 滑到 [ɛ] ( F1 300→650, F2 2600→1850 ); 音高先升後降, 偏高 )
+  #  - pitch: 基準音高 ( 預設 300 ), size: 聲道大小
+  synth.yay = (o = {}) ->
+    dur = o.dur or 0.5; f0 = o.pitch or 300; size = o.size or 1
+    make dur, (L, R, n) ->
+      r = rng(o.seed or 157)
+      d = formant-voice n, r, size, (u) ->
+        g = ease Math.min(1, u / 0.25)
+        amp = Math.min(1, u / 0.04) * (if u > 0.7 => Math.max(0, 1 - (u - 0.7) / 0.3) else 1)
+        pc = if u < 0.35 => mix(0.88, 1.12, ease(u / 0.35)) else mix(1.12, 0.85, ease((u - 0.35) / 0.65))
+        {f0: f0 * pc, voice: 1, asp: 0.05, amp, F: [mix(320, 660, g), mix(2600, 1850, g), mix(3200, 2650, g), 3800]}
+      fade-out d, 0.03
+      pan L, R, d, o.pan
+
+  # 答對: style pingpong ( 預設, 「叮咚」兩個由高往下的鐘琴音 ) | arp ( 快速上行的琶音 + 閃光 )
+  #  - notes: 音 ( pingpong 預設 [B5, G5] ), gap: 間隔
+  synth.correct = (o = {}) ->
+    arp = o.style == \arp
+    notes = (o.notes or (if arp => <[C6 E6 G6 C7]> else <[B5 G5]>)).map S.freq
+    gap = o.gap or (if arp => 0.07 else 0.2)
+    make notes.length * gap + 1.1, (L, R, n) ->
+      d = new Float32Array n
+      for f, k in notes
+        last = k == notes.length - 1
+        dec = if last => 0.45 else (if arp => 0.15 else 0.25)
+        partial d, k * gap, f, 1, dec, 0.002
+        partial d, k * gap, f * 2, 0.25, dec * 0.4, 0.002
+        partial d, k * gap, f * 3.01, 0.08, dec * 0.25, 0.002
+      if arp
+        sh = biquad noise(n, rng(o.seed or 163)), \hp, 7000
+        for i from 0 til n => d[i] += sh[i] * 0.08 * env(i / SR - notes.length * gap * 0.6, 0.1, 0.25) * (if i / SR > notes.length * gap * 0.6 - 0.1 => 1 else 0)
+      pan L, R, fade-out(d, 0.05), o.pan
+  synth.correct.reverb = 0.15
+  # 答錯: style buzzer ( 預設, 「噗、噗——」低頻蜂鳴 ) | trombone ( 「哇、哇、哇、哇~」下滑的悲傷長號 )
+  #  - pitch: 蜂鳴的音高 ( 預設 140Hz )
+  synth.wrong = (o = {}) ->
+    if o.style == \trombone
+      notes = <[D4 C#4 C4 B3]>.map S.freq
+      return make 2.2, (L, R, n) ->
+        d = new Float32Array n; ph = 0
+        for i from 0 til n
+          t = i / SR
+          k = Math.min 3, Math.floor(t / 0.42)
+          lt = t - k * 0.42
+          f = notes[k] * (if k == 3 => 1 + 0.025 * Math.sin(2 * Math.PI * 5.5 * Math.max(0, lt - 0.15)) else 1) * (1 - 0.03 * Math.min(1, lt / 0.3))
+          ph += f / SR
+          p = ph % 1
+          # 每個音: 吹出來 ( 起音稍慢 ), 最後一個拉長
+          a = (if k < 3 => Math.min(1, lt / 0.04) * Math.max(0, 1 - Math.max(0, lt - 0.3) / 0.08) else Math.min(1, lt / 0.04) * Math.max(0, 1 - lt / 0.95))
+          d[i] = (2 * p - 1) * a
+        # 長號: 鋸齒波經過隨音量變亮的濾波 ( 用固定的低通近似 ) + 一點銅管的共振
+        biquad d, \lp, 1400, 0.9
+        b2 = biquad Float32Array.from(d), \bp, 1200, 2
+        for i from 0 til n => d[i] += b2[i] * 0.5
+        pan L, R, fade-out(d, 0.05), o.pan
+    f = o.pitch or 140
+    make 0.75, (L, R, n) ->
+      d = new Float32Array n; p1 = 0; p2 = 0
+      for i from 0 til n
+        t = i / SR
+        a = (if t < 0.13 => Math.min(1, t / 0.005) * Math.min(1, (0.13 - t) / 0.01) else if t > 0.19 => Math.min(1, (t - 0.19) / 0.005) * Math.min(1, (0.72 - t) / 0.03) else 0)
+        p1 += f / SR; p2 += f * 1.012 / SR
+        d[i] = ((if p1 % 1 < 0.5 => 1 else -1) + (if p2 % 1 < 0.5 => 1 else -1)) * 0.5 * Math.max(0, a)
+      biquad d, \lp, 2500
+      pan L, R, d, o.pan
+
+  # ---------------------------------------------------------------- 樂器: 木琴 / 鐵琴 ( 模態合成: 幾個不諧和的泛音各自衰減 )
+  # hard: 槌子的硬度 ( 0 軟 ~ 1 硬 ), 越硬高泛音與敲擊聲越多
+  bar = (o, cfg) ->
+    f = S.freq(o.note or cfg.note); dur = o.dur or cfg.dur
+    hard = if o.hard? => o.hard else 0.5
+    base = cfg.decay * Math.pow(S.freq(cfg.note) / f, 0.4)
+    make dur, (L, R, n) ->
+      d = new Float32Array n
+      for ratio, k in cfg.ratios
+        partial d, 0, f * ratio, cfg.amps[k] * (if k => 0.3 + 1.4 * hard else 1), base / (1 + k * cfg.damp), 0.0015
+      if cfg.trem
+        depth = if o.trem? => o.trem else 0.35
+        for i from 0 til n => d[i] *= 1 - depth * (0.5 + 0.5 * Math.sin(2 * Math.PI * 5.5 * i / SR))
+      m = biquad noise(Math.round(0.008 * SR), rng(o.seed or 83)), \lp, 2000 + 6000 * hard
+      for i from 0 til m.length => d[i] += m[i] * 0.4 * hard * (1 - i / m.length)
+      pan L, R, fade-out(d), o.pan
+  synth.marimba = (o = {}) -> bar o, {note: \C4, dur: 1.5, ratios: [1 3.93 9.24], amps: [1 0.3 0.1], decay: 0.45, damp: 2.5}
+  synth.xylophone = (o = {}) -> bar o, {note: \C5, dur: 0.8, ratios: [1 3 6.1], amps: [1 0.5 0.2], decay: 0.2, damp: 1.5}
+  synth.vibraphone = (o = {}) -> bar o, {note: \F4, dur: 3, ratios: [1 4 10], amps: [1 0.25 0.08], decay: 1.4, damp: 3, trem: true}
+  synth.glockenspiel = (o = {}) -> bar o, {note: \C6, dur: 2, ratios: [1 2.76 5.4 8.93], amps: [1 0.4 0.2 0.08], decay: 0.9, damp: 1.2}
+
+  # ---------------------------------------------------------------- 樂器: 吉他 ( Karplus-Strong + 撥弦位置 + 琴身共鳴 )
+  CHORDS =
+    C: <[C3 E3 G3 C4 E4]>, D: <[D3 A3 D4 F#4]>, Dm: <[D3 A3 D4 F4]>, E: <[E2 B2 E3 G#3 B3 E4]>
+    Em: <[E2 B2 E3 G3 B3 E4]>, F: <[F2 C3 F3 A3 C4 F4]>, G: <[G2 B2 D3 G3 B3 G4]>
+    A: <[A2 E3 A3 C#4 E4]>, Am: <[A2 E3 A3 C4 E4]>
+  string = (f, n, o, r) ->
+    bright = if o.bright? => o.bright else 0.5
+    mute = o.mute or 0
+    s = 0.5 + 0.45 * bright * (1 - mute)
+    period = SR / f - (1 - s)
+    size = Math.ceil(period) + 3
+    exc = noise size, r
+    # 撥弦位置 pos ( 0~0.5, 離琴橋的比例 ): 減去延遲的自己, 削掉在該處是節點的泛音
+    p = Math.max 1, Math.round(period * (o.pos or 0.2))
+    for i from size - 1 to p by -1 => exc[i] -= exc[i - p]
+    a = 0.15 + 0.8 * bright * (1 - mute * 0.7); y = 0
+    for i from 0 til size => y := a * exc[i] + (1 - a) * y; exc[i] = y
+    sustain = (o.sustain or 4) * (1 - 0.92 * mute)
+    g = Math.pow(0.001, 1 / (f * sustain))
+    line = new Float32Array n + size
+    for i from 0 til size => line[i] = exc[i]
+    d = new Float32Array n
+    for k from size til n + size
+      j = k - period; j0 = Math.floor j; fr = j - j0
+      a1 = line[j0] * (1 - fr) + line[j0 + 1] * fr
+      b1 = line[j0 - 1] * (1 - fr) + line[j0] * fr
+      line[k] = g * (s * a1 + (1 - s) * b1)
+      d[k - size] = line[k]
+    d
+  # note 單音, 或 chord ( 和弦名稱 ) / notes ( 音名陣列 ) 刷和弦; strum 每條弦的間隔, dir: down | up
+  synth.guitar = (o = {}) ->
+    notes = o.notes or CHORDS[o.chord] or [o.note or \E3]
+    if o.dir == \up => notes = notes.slice!reverse!
+    dur = o.dur or 3; gap = if o.strum? => o.strum else 0.03
+    make dur, (L, R, n) ->
+      r = rng(o.seed or 89)
+      for note, k in notes
+        at = Math.round(k * gap * SR)
+        d = string S.freq(note), n - at, o, r
+        body = biquad(Float32Array.from(d), \bp, 105, 1.5)
+        body2 = biquad(Float32Array.from(d), \bp, 220, 2)
+        for i from 0 til d.length => d[i] = d[i] + body[i] * 0.6 + body2[i] * 0.3
+        fade-out d, 0.05
+        p = (o.pan or 0) + (k / Math.max(1, notes.length - 1) - 0.5) * 0.3
+        gl = Math.cos((p + 1) * Math.PI / 4); gr = Math.sin((p + 1) * Math.PI / 4)
+        for i from 0 til d.length => L[at + i] += d[i] * gl; R[at + i] += d[i] * gr
+
+  # ---------------------------------------------------------------- 鼓組
+  # 大鼓: 正弦由 tune * 3 掉到 tune, punch 為起音的力道
+  synth.kick = (o = {}) ->
+    f1 = o.tune or 50; dec = o.decay or 0.3; punch = if o.punch? => o.punch else 0.5
+    make dec * 2 + 0.05, (L, R, n) ->
+      d = new Float32Array n; ph = 0
+      ck = biquad noise(n, rng(o.seed or 97)), \lp, 4000
+      for i from 0 til n
+        t = i / SR
+        ph += 2 * Math.PI * (f1 + f1 * 2 * Math.exp(-t / 0.03)) / SR
+        d[i] = Math.tanh((Math.sin(ph) * env(t, 0.001, dec) + ck[i] * punch * 0.6 * env(t, 0.0002, 0.003)) * (1 + 2 * punch))
+      pan L, R, fade-out(d), o.pan
+  # 小鼓: 鼓皮的音 ( tune Hz ) + 響弦的雜訊 ( snappy )
+  synth.snare = (o = {}) ->
+    f = o.tune or 180; dec = o.decay or 0.15; snappy = if o.snappy? => o.snappy else 0.6
+    make dec * 2 + 0.05, (L, R, n) ->
+      d = new Float32Array n
+      partial d, 0, f, 0.8, 0.05
+      partial d, 0, f * 1.83, 0.4, 0.035
+      nz = biquad biquad(noise(n, rng(o.seed or 101)), \hp, 1200), \lp, 9000
+      for i from 0 til n => d[i] += nz[i] * snappy * 1.2 * env(i / SR, 0.001, dec * 0.8)
+      pan L, R, fade-out(d), o.pan
+  # 金屬聲: 六個不成倍數的方波 ( 808 的作法 ), 給鈸與 hi-hat
+  metal = (n, scale = 1) ->
+    d = new Float32Array n
+    for f in [205.3 304.4 369.6 522.7 540 800]
+      w = f * scale / SR; ph = 0
+      for i from 0 til n
+        ph += w
+        d[i] += if ph % 1 < 0.5 => 1 else -1
+    d
+  # hi-hat: open 0 ( 閉合 ) ~ 1 ( 全開 )
+  synth.hihat = (o = {}) ->
+    open = o.open or 0; dec = 0.04 + open * 0.5
+    make dec * 2.5 + 0.02, (L, R, n) ->
+      m = metal n, (o.tune or 1)
+      nz = noise n, rng(o.seed or 103)
+      d = new Float32Array n
+      for i from 0 til n => d[i] = m[i] * 0.15 + nz[i] * 0.5
+      biquad biquad(d, \hp, 7000), \bp, 10000, 0.8
+      for i from 0 til n => d[i] *= env(i / SR, 0.0008, dec)
+      pan L, R, fade-out(d), o.pan
+  # 中鼓 / 落地鼓: note 為鼓的音高
+  synth.tom = (o = {}) ->
+    f = S.freq(o.note or \A2); dec = o.decay or 0.35
+    make dec * 2 + 0.05, (L, R, n) ->
+      d = new Float32Array n; ph = 0
+      nz = biquad noise(n, rng(o.seed or 107)), \bp, f * 4, 1
+      for i from 0 til n
+        t = i / SR
+        # 起音時音高高一些, 約 50ms 內落到 f
+        ph += 2 * Math.PI * f * (1 + 0.5 * Math.exp(-t / 0.04)) / SR
+        d[i] = Math.sin(ph) * env(t, 0.002, dec) + nz[i] * 0.3 * env(t, 0.001, 0.02)
+      pan L, R, fade-out(d), o.pan
+  # 拍手: 幾次相隔約 10ms 的雜訊爆發, 再一段尾音
+  synth.clap = (o = {}) ->
+    dec = o.decay or 0.12
+    make dec * 2.5 + 0.06, (L, R, n) ->
+      nz = biquad noise(n, rng(o.seed or 109)), \bp, 1100, 1.2
+      d = new Float32Array n
+      for i from 0 til n
+        t = i / SR
+        a = 0
+        for at in [0 0.011 0.022] => if t >= at => a += env(t - at, 0.0005, 0.006)
+        if t >= 0.031 => a += env(t - 0.031, 0.001, dec)
+        d[i] = nz[i] * a
+      L.set d; R.set biquad(Float32Array.from(d), \bp, 1300, 1.5)
+  # 衰減的正弦, 用旋轉算 ( 比 Math.sin 快 ): at 秒開始, 頻率 f, 振幅 a, 衰減時間常數 tau, 起音 att
+  ring = (d, at, f, a, tau, att = 0.0005) ->
+    if f >= SR * 0.45 => return
+    o0 = Math.round at * SR
+    g = Math.exp(-1 / (tau * SR))
+    w = 2 * Math.PI * f / SR
+    c = Math.cos w; s = Math.sin w
+    x = 1; y = 0; A = a
+    an = Math.max 1, Math.round(att * SR)
+    for i from o0 til d.length
+      k = i - o0
+      d[i] += y * A * (if k < an => k / an else 1)
+      t = x * c - y * s; y = x * s + y * c; x = t
+      A *= g
+      if A < 1e-5 => break
+  # 常態分布的亂數
+  gauss = (r) -> Math.sqrt(-2 * Math.log(r! + 1e-12)) * Math.cos(2 * Math.PI * r!)
+  # 碎音鈸 ( 依錄音分析: 能量集中在 3~6kHz, 頻譜是密集的尖峰而不是白噪音; 敲擊後漸亮; 高頻衰減較快, 尾音漸暗 )
+  #  - decay: 尾音長度的倍數 ( 1 約 2 秒 ), tune: 音高倍數
+  synth.crash = (o = {}) ->
+    dec = o.decay or 1; tune = o.tune or 1
+    make 2.4 * dec + 0.1, (L, R, n) ->
+      r = rng(o.seed or 113)
+      for ch in [L, R]
+        for k from 0 til 260
+          f = Math.max(1200, Math.min(14000, 4200 * Math.pow(2, 0.55 * gauss(r)))) * tune
+          ring ch, 0, f, (0.4 + r!) / 16, 0.3 * dec * Math.pow(f / 4200 / tune, -0.8) * (0.6 + 0.8 * r!), 0.002 + 0.07 * r! * Math.min(1, f / 4200 / tune)
+        # 鈸身的低音
+        for k from 0 til 30
+          ring ch, 0, 350 * tune * Math.pow(3, r!), (0.3 + r!) / 14, 0.5 * dec * (0.6 + 0.8 * r!), 0.003
+        nz = biquad noise(n, r), \lp, 9000
+        # 尖峰之間的一層雜訊 ( 真的鈸不是純粹的正弦 )
+        sh = biquad noise(n, r), \bp, 4200 * tune, 0.8
+        for i from 0 til n
+          t = i / SR
+          ch[i] += nz[i] * 0.4 * env(t, 0.0005, 0.008) + sh[i] * 0.1 * env(t, 0.03, 0.3 * dec)
+        biquad ch, \hp, 250
+        fade-out ch, 0.1
+  # 疊音鈸 ( 依錄音分析: 很短的高頻棒擊, 接著小 10dB、集中在 2~3kHz 的長尾音, 越來越暗 )
+  #  - decay: 尾音長度的倍數 ( 1 約 3 秒 ), bell: 0~1 越靠近鈸心, 鐘音越重, tune: 音高倍數
+  synth.ride = (o = {}) ->
+    dec = o.decay or 1; tune = o.tune or 1; bell = o.bell or 0
+    make 4 * dec + 0.1, (L, R, n) ->
+      r = rng(o.seed or 127)
+      st = biquad noise(n, r), \bp, 4800 * tune, 0.7
+      for ch in [L, R]
+        for i from 0 til Math.round(0.05 * SR) => ch[i] += st[i] * 0.9 * env(i / SR, 0.0003, 0.006)
+        for k from 0 til 40 => ring ch, 0, (5000 + 4000 * r!) * tune, 0.04, 0.015 + 0.03 * r!
+        for k from 0 til 180
+          f = Math.max(700, Math.min(10000, 2600 * Math.pow(2, 0.55 * gauss(r)))) * tune
+          ring ch, 0, f, (0.4 + r!) / 80, 0.9 * dec * Math.pow(f / 2600 / tune, -0.3) * (0.6 + 0.8 * r!), 0.001
+        sh = biquad noise(n, r), \bp, 3000 * tune, 0.7
+        for i from 0 til n => ch[i] += sh[i] * 0.05 * env(i / SR, 0.002, 0.35 * dec)
+        if bell
+          for k from 0 til 14
+            f = 2800 * tune * Math.pow(2, 0.4 * gauss(r))
+            ring ch, 0, f, bell * (0.5 + r!) / 6, 0.5 * dec * (0.6 + 0.8 * r!), 0.001
+        biquad ch, \hp, 400
+        fade-out ch, 0.1
+
+  # 節奏: pattern {kick: 'x...x...', snare: '....x...', ...}, 一格是十六分音符
+  #  - X 重音, x 一般, o 輕 ( ghost ), 其他字元 ( . - ) 休止; 空白與 | 忽略
+  #  - 名稱: kick snare hihat ohat ( 開 hi-hat ) tom ltom htom clap crash ride, 或任一合成聲名稱
+  #  - 值也可以是 [pattern, 參數], 例如 tom: ['....x...', {note: 'D3'}]
+  #  - bpm, bars ( 重複幾次 ), swing ( 0~1, 反拍的十六分音符往後挪 )
+  KIT =
+    kick: [\kick, {}, 1], snare: [\snare, {}, 0.9], hihat: [\hihat, {}, 0.45], ohat: [\hihat, {open: 0.6}, 0.45]
+    tom: [\tom, {}, 0.8], ltom: [\tom, {note: \E2}, 0.8], htom: [\tom, {note: \D3}, 0.8]
+    clap: [\clap, {}, 0.8], crash: [\crash, {}, 0.55], ride: [\ride, {}, 0.4]
+  VEL = {X: 1, x: 0.75, o: 0.4}
+  synth.beat = (o = {}) ->
+    step = 60 / (o.bpm or 100) / 4; bars = o.bars or 1; swing = o.swing or 0
+    pat = o.pattern or {kick: 'x...x...x...x...', snare: '....x.......x...', hihat: 'x.x.x.x.x.x.x.x.'}
+    hits = []; steps = 0; tail = 0
+    for name, def of pat
+      [str, opt] = if Array.isArray(def) => def else [def]
+      opt = opt or {}
+      [kind, base, g] = KIT[name] or [name, {}, 0.8]
+      if !synth[kind] => continue
+      b = synth[kind]({} <<< base <<< opt)
+      tail = Math.max tail, b.duration
+      s = (str or '').replace /[\s|]/g, ''
+      steps = Math.max steps, s.length
+      hits.push {b, s, g: (if opt.gain? => opt.gain else g)}
+    total = steps * bars
+    make Math.max(0.1, total * step + tail), (L, R, n) ->
+      for {b, s, g} in hits
+        for k from 0 til total
+          v = VEL[s[k % steps]]
+          if !v => continue
+          place L, R, b, k * step + (if k % 2 => swing * step * 0.5 else 0), v * g
+
+  # ---------------------------------------------------------------- 通用掃頻
+  # wave: sine | triangle | square | saw | noise ( 帶通雜訊, 用 q ); curve: exp | lin
+  synth.sweep = (o = {}) ->
+    dur = o.dur or 1; f0 = S.freq(o.from or 200); f1 = S.freq(o.to or 2000)
+    att = if o.attack? => o.attack else 0.01
+    rel = if o.release? => o.release else 0.1
+    fu = if o.curve == \lin => ((u) -> f0 + (f1 - f0) * u) else ((u) -> f0 * Math.pow(f1 / f0, u))
+    make dur, (L, R, n) ->
+      d = if o.wave == \noise => biquad-tv noise(n, rng(o.seed or 131)), \bp, fu, (o.q or 2)
+      else
+        x = new Float32Array n; ph = 0
+        for i from 0 til n
+          ph += fu(i / n) / SR
+          p = ph % 1
+          x[i] = switch o.wave
+          | \square => (if p < 0.5 => 0.6 else -0.6)
+          | \saw => (2 * p - 1) * 0.6
+          | \triangle => 1 - 4 * Math.abs(p - 0.5)
+          | otherwise => Math.sin(2 * Math.PI * p)
+        x
+      for i from 0 til n
+        t = i / SR
+        d[i] *= Math.min(1, t / Math.max(0.001, att), (dur - t) / Math.max(0.001, rel))
+      pan L, R, d, o.pan
+
+  # ---------------------------------------------------------------- 每種合成聲都可以加殘響: reverb ( 0~1, 濕聲比例 ), room ( 0~1, 空間大小 )
+  wrap = (fn) -> (o = {}) ->
+    b = fn o
+    mix = if o.reverb? => o.reverb else (fn.reverb or 0)
+    if mix > 0 => reverb b, mix, (if o.room? => o.room else 0.5) else b
+  for k of synth => synth[k] = wrap synth[k]
 
   if typeof(module) != \undefined and module.exports => module.exports = S
   if typeof(window) != \undefined => window.sfx = S

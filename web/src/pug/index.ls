@@ -5,8 +5,13 @@ S = window.sfx
 R = (k, min, max, step, def) -> {k, type: \range, min, max, step, def}
 N = (k, def, hint) -> {k, type: \note, def, hint}
 J = (k, def) -> {k, type: \json, def}
+O = (k, options, def) -> {k, type: \select, options, def}
 seed = (def) -> R \seed, 1, 99, 1, def
 pan = R \pan, -1, 1, 0.05, 0
+# 殘響: 每種聲音都可以加
+rv = (def = 0) -> [R(\reverb, 0, 1, 0.05, def), R(\room, 0, 1, 0.05, 0.5)]
+INSTRUMENTS = <[pluck marimba xylophone vibraphone glockenspiel guitar chime bell]>
+ROCK = {kick: 'x.......x.x.....', snare: '....x.......x...', hihat: 'x.x.x.x.x.x.x.x.'}
 
 groups =
   * name: 'UI 短音'
@@ -19,13 +24,23 @@ groups =
       * name: \toggle, desc: \開關, params: [pan]
       * name: \type, desc: '打字 ( 每次換 seed 較自然 )', params: [seed(11)]
       * name: \thump, desc: '落地、蓋章', params: [seed(5), pan]
+      * name: \snap, desc: '吸附、到位', params: [seed(41), pan]
   * name: \提示
     sounds:
-      * name: \chime, desc: '鈴聲、完成一步', params: [N(\note, \E6), R(\dur, 0.3, 4, 0.1, 1.4), pan]
-        presets: {E5: {note: \E5}, 長: {note: \B5, dur: 3}, 短: {note: \G6, dur: 0.5}}
-      * name: \success, desc: '成功 ( C-E-G 琶音 )', params: [pan]
-      * name: \notify, desc: \通知, params: [pan]
-  * name: \轉場
+      * name: \chime, desc: '鈴聲、完成一步', params: [N(\note, \E6), R(\dur, 0.3, 4, 0.1, 1.4), pan] ++ rv!
+        presets: {E5: {note: \E5}, 長: {note: \B5, dur: 3}, 短: {note: \G6, dur: 0.5}, 殘響: {reverb: 0.4}}
+      * name: \success, desc: '成功 ( C-E-G 琶音 )', params: [pan] ++ rv!
+      * name: \notify, desc: \通知, params: [pan] ++ rv!
+      * name: \error, desc: '錯誤 ( 預設三全音往下 )', params: [N(\from, \B3), N(\to, \F3), pan]
+        presets: {小二度: {from: \E4, to: \D#4}, 低: {from: \E3, to: \A#2}}
+      * name: \correct, desc: '答對 ( 叮咚 )', params: [O(\style, <[pingpong arp]>, \pingpong), J(\notes, null), R(\gap, 0.03, 0.4, 0.01, 0.2), pan] ++ rv(0.15)
+        presets: {琶音: {style: \arp}, 高: {notes: <[E6 C6]>}, 快: {gap: 0.12}}
+      * name: \wrong, desc: '答錯 ( 噗噗 )', params: [O(\style, <[buzzer trombone]>, \buzzer), R(\pitch, 60, 400, 1, 140), pan]
+        presets: {長號: {style: \trombone}, 低沉: {pitch: 90}}
+      * name: \reveal, desc: '揭曉 ( 鐘琴琶音 + 閃光 )'
+        params: [J(\notes, <[C6 E6 G6 C7 E7]>), R(\gap, 0.02, 0.2, 0.01, 0.06), seed(53), pan] ++ rv(0.35)
+        presets: {慢: {gap: 0.12}, 小調: {notes: <[A5 C6 E6 A6 C7]>}, 乾: {reverb: 0}}
+  * name: \動作
     sounds:
       * name: \whoosh, desc: \轉場
         params: [
@@ -40,27 +55,108 @@ groups =
           像風: {dur: 1, q: 0.5}
           像哨音: {dur: 0.6, q: 3}
       * name: \swell, desc: '段落前的醞釀', params: [R(\dur, 0.5, 6, 0.1, 2), seed(23)]
-  * name: \樂音
+      * name: \slide, desc: '滑入、滑出'
+        params: [R(\dur, 0.1, 1, 0.05, 0.3), R(\from, 100, 6000, 10, 900), R(\to, 100, 6000, 10, 2600), R(\q, 0.3, 4, 0.1, 0.9), R(\dir, -1, 1, 0.1, 1), seed(37)]
+        presets: {往左: {dir: -1}, 滑出: {from: 2600, to: 700}, 短: {dur: 0.18}}
+      * name: \rise, desc: '數值上升', params: [N(\from, null, '300 Hz'), N(\to, null, '900 Hz'), R(\dur, 0.1, 3, 0.05, 0.6), pan]
+        presets: {長: {dur: 1.5}, 八度: {from: \C4, to: \C5}}
+      * name: \fall, desc: '數值下降', params: [N(\from, null, '900 Hz'), N(\to, null, '250 Hz'), R(\dur, 0.1, 3, 0.05, 0.6), pan]
+      * name: \count, desc: '數字滾動'
+        params: [R(\n, 2, 40, 1, 12), R(\dur, 0.2, 4, 0.1, 1.2), O(\ease, <[out in linear]>, \out), R(\climb, 0, 24, 1, 7), N(\note, \C6), pan]
+        presets: {多: {n: 30, dur: 2}, 平: {ease: \linear, climb: 0}, 加速: {ease: \in}}
+      * name: \draw, desc: '筆畫'
+        params: [R(\dur, 0.2, 4, 0.1, 1), R(\rough, 0, 1, 0.05, 0.5), R(\pitch, 500, 8000, 50, 2500), seed(43), pan]
+        presets: {鉛筆: {pitch: 4500, rough: 0.8}, 馬克筆: {pitch: 1500, rough: 0.2}}
+      * name: \glitch, desc: \故障, params: [R(\dur, 0.1, 2, 0.05, 0.5), seed(47)]
+      * name: \sweep, desc: '通用掃頻'
+        params: [
+          O(\wave, <[sine triangle square saw noise]>, \sine), O(\curve, <[exp lin]>, \exp)
+          N(\from, null, '200 Hz'), N(\to, null, '2000 Hz'), R(\dur, 0.1, 4, 0.05, 1)
+          R(\q, 0.3, 10, 0.1, 2), R(\attack, 0, 1, 0.01, 0.01), R(\release, 0, 2, 0.01, 0.1), pan
+        ]
+        presets: {雷射: {wave: \square, from: 3000, to: 200, dur: 0.25}, 升空: {wave: \noise, from: 200, to: 6000, dur: 2, q: 4}, 警笛: {wave: \saw, from: 600, to: 900, dur: 0.6}}
+  * name: \敘事
     sounds:
-      * name: \pluck, desc: '撥弦 ( 類古箏 )'
-        params: [N(\note, \A3), R(\dur, 0.3, 5, 0.1, 2.5), R(\bright, 0, 1, 0.05, 0.6), R(\slide, 0, 3, 0.1, 0.6), seed(13), pan]
-        presets: {亮: {note: \D4, bright: 0.9}, 悶: {note: \A2, bright: 0.1}, 不滑音: {slide: 0}}
-      * name: \melody, desc: '撥弦旋律'
-        params: [J(\notes, [[0, \A3], [0.4, \C4], [0.8, \E4], [1.2, \A4, 2]]), R(\bright, 0, 1, 0.05, 0.6), R(\slide, 0, 3, 0.1, 0.6)]
-        presets:
-          五聲: {notes: [[0, \D4], [0.25, \E4], [0.5, \G4], [0.75, \A4], [1, \D5, 2]]}
-          和弦: {notes: [[0, \C3, 2.5], [0.03, \G3, 2.5], [0.06, \E4, 2.5]], slide: 0}
-      * name: \drone, desc: '持續低音'
-        params: [J(\notes, <[A1 E2 A2]>), R(\dur, 1, 12, 0.5, 8), R(\attack, 0.1, 4, 0.1, 1.5), R(\release, 0.1, 4, 0.1, 2)]
-        presets: {小調: {notes: <[A1 E2 C3]>}, 高: {notes: <[D3 A3 D4]>, dur: 4}}
-  * name: \環境
+      * name: \tension, desc: '緊張 ( 不和諧音簇 )', params: [N(\note, \A2), R(\dur, 1, 12, 0.5, 6)]
+      * name: \heartbeat, desc: \心跳, params: [R(\bpm, 40, 180, 1, 70), R(\dur, 1, 10, 0.5, 4), pan]
+        presets: {緊張: {bpm: 130}}
+      * name: \clock, desc: '時鐘', params: [R(\bpm, 30, 240, 1, 60), R(\dur, 1, 10, 0.5, 4), seed(59), pan]
+  * name: '人聲與人體'
     sounds:
+      * name: \fingersnap, desc: \打響指, params: [R(\tone, 2000, 5000, 10, 3200), seed(137), pan]
+        presets: {低: {tone: 2500}, 高: {tone: 4000}}
+      * name: \huh, desc: '蛤? ( 疑問 )', params: [R(\pitch, 80, 400, 1, 200), R(\rise, 1, 3, 0.05, 1.9), R(\dur, 0.2, 1, 0.01, 0.45), R(\size, 0.8, 1.3, 0.01, 1), seed(151)]
+        presets: {男聲: {pitch: 115, size: 0.9}, 小孩: {pitch: 300, size: 1.2}, 很驚訝: {rise: 2.4, dur: 0.6}}
+      * name: \yay, desc: '耶! ( 開心 )', params: [R(\pitch, 100, 500, 1, 300), R(\dur, 0.2, 1.2, 0.01, 0.5), R(\size, 0.8, 1.3, 0.01, 1), seed(157)]
+        presets: {男聲: {pitch: 170, size: 0.9}, 小孩: {pitch: 380, size: 1.2}, 拉長: {dur: 0.9}}
+  * name: '擬音與環境'
+    sounds:
+      * name: \paper, desc: \翻頁, params: [R(\dur, 0.4, 2.5, 0.05, 1.2), R(\crisp, 0, 3, 0.1, 1), R(\flutter, 0, 1, 0.05, 0.6), seed(61)]
+        presets: {軟紙: {crisp: 0.3}, 硬紙: {crisp: 2.5}, 快翻: {dur: 0.6}, 慢翻: {dur: 2, flutter: 0.9}}
+      * name: \water, desc: '水滴、氣泡、溪流', params: [R(\n, 1, 300, 1, 1), R(\size, 0.5, 10, 0.1, 3), R(\rise, 0, 1, 0.05, 0.05), R(\dur, 0.2, 10, 0.1, 0.4), seed(67)]
+        presets: {大水滴: {size: 6}, 小水滴: {size: 1.8}, 冒泡: {n: 40, size: 3, rise: 0.1, dur: 1.6}, 溪流: {n: 250, size: 2.5, rise: 0.1, dur: 6}}
+      * name: \fire, desc: \火, params: [R(\dur, 1, 10, 0.5, 6), R(\density, 0, 4, 0.1, 1), seed(71)]
+      * name: \steps, desc: \腳步, params: [O(\surface, <[wood concrete gravel snow grass]>, \wood), O(\gait, <[walk run]>, \walk), R(\n, 1, 12, 1, 4), R(\pace, 0.2, 1.2, 0.05, 0.5), seed(73)]
+        presets: {水泥: {surface: \concrete}, 水泥跑步: {surface: \concrete, gait: \run, n: 8}, 碎石: {surface: \gravel}, 雪地: {surface: \snow}, 草地: {surface: \grass}, 跑: {gait: \run, n: 8}}
+      * name: \bell, desc: '鐘 ( 教堂鐘、管鐘 )', params: [N(\note, \C5), R(\dur, 1, 10, 0.5, 5), pan] ++ rv(0.2)
+        presets: {大鐘: {note: \C3, dur: 8}, 管鐘: {note: \G5, dur: 3}}
+      * name: \thunder, desc: \雷, params: [R(\dur, 2, 12, 0.5, 6), R(\dist, 0, 1, 0.05, 0.5), seed(79)]
+        presets: {近: {dist: 0}, 遠: {dist: 1}}
       * name: \wind, desc: \風, params: [R(\dur, 1, 10, 0.5, 6), R(\cutoff, 200, 3000, 10, 900), seed(17)]
         presets: {低沉: {cutoff: 400}, 尖: {cutoff: 2400}}
       * name: \rain, desc: \雨, params: [R(\dur, 1, 10, 0.5, 6), R(\density, 0.002, 0.2, 0.002, 0.02), seed(19)]
         presets: {毛毛雨: {density: 0.006}, 大雨: {density: 0.08}}
       * name: \buzz, desc: \昆蟲振翅, params: [R(\dur, 0.2, 4, 0.1, 1.5), R(\freq, 80, 600, 1, 220), pan]
         presets: {高: {freq: 330}, 大隻: {freq: 120, dur: 2.5}}
+  * name: \樂器
+    sounds:
+      * name: \pluck, desc: '撥弦 ( 類古箏 )'
+        params: [N(\note, \A3), R(\dur, 0.3, 5, 0.1, 2.5), R(\bright, 0, 1, 0.05, 0.6), R(\slide, 0, 3, 0.1, 0.6), seed(13), pan] ++ rv!
+        presets: {亮: {note: \D4, bright: 0.9}, 悶: {note: \A2, bright: 0.1}, 不滑音: {slide: 0}}
+      * name: \guitar, desc: '吉他 ( 單音或刷和弦 )'
+        params: [
+          N(\note, \E3), O(\chord, ['', ...<[C D Dm E Em F G A Am]>], ''), J(\notes, null), O(\dir, <[down up]>, \down)
+          R(\strum, 0, 0.1, 0.005, 0.03), R(\dur, 0.5, 6, 0.1, 3), R(\bright, 0, 1, 0.05, 0.5)
+          R(\pos, 0.05, 0.5, 0.01, 0.2), R(\mute, 0, 1, 0.05, 0), seed(89), pan
+        ] ++ rv!
+        presets: {Em: {chord: \Em}, G: {chord: \G}, 上刷: {chord: \Am, dir: \up, strum: 0.015}, 悶音: {note: \E2, mute: 0.8}, 泛音感: {note: \E4, pos: 0.5, bright: 0.9}}
+      * name: \marimba, desc: '馬林巴 ( 木琴 )', params: [N(\note, \C4), R(\dur, 0.3, 4, 0.1, 1.5), R(\hard, 0, 1, 0.05, 0.5), pan] ++ rv!
+        presets: {低: {note: \C3}, 硬槌: {hard: 1}, 軟槌: {hard: 0}}
+      * name: \xylophone, desc: '木琴', params: [N(\note, \C5), R(\dur, 0.2, 3, 0.1, 0.8), R(\hard, 0, 1, 0.05, 0.5), pan] ++ rv!
+      * name: \vibraphone, desc: '鐵琴 ( 顫音琴 )', params: [N(\note, \F4), R(\dur, 0.5, 6, 0.1, 3), R(\trem, 0, 1, 0.05, 0.35), R(\hard, 0, 1, 0.05, 0.5), pan] ++ rv!
+        presets: {無顫音: {trem: 0}, 殘響: {reverb: 0.4}}
+      * name: \glockenspiel, desc: '鐘琴', params: [N(\note, \C6), R(\dur, 0.3, 4, 0.1, 2), R(\hard, 0, 1, 0.05, 0.5), pan] ++ rv!
+      * name: \melody, desc: '旋律 ( 可換樂器 )'
+        params: [J(\notes, [[0, \A3], [0.4, \C4], [0.8, \E4], [1.2, \A4, 2]]), O(\instrument, INSTRUMENTS, \pluck), R(\bright, 0, 1, 0.05, 0.6), R(\slide, 0, 3, 0.1, 0.6)] ++ rv!
+        presets:
+          五聲: {notes: [[0, \D4], [0.25, \E4], [0.5, \G4], [0.75, \A4], [1, \D5, 2]]}
+          和弦: {notes: [[0, \C3, 2.5], [0.03, \G3, 2.5], [0.06, \E4, 2.5]], slide: 0}
+          馬林巴: {instrument: \marimba, notes: [[0, \C4], [0.2, \E4], [0.4, \G4], [0.6, \C5], [0.8, \G4], [1, \C5, 1.5]]}
+          鐵琴: {instrument: \vibraphone, notes: [[0, \F4, 2], [0.5, \A4, 2], [1, \C5, 2], [1.5, \E5, 3]], reverb: 0.3}
+      * name: \drone, desc: '持續低音'
+        params: [J(\notes, <[A1 E2 A2]>), R(\dur, 1, 12, 0.5, 8), R(\attack, 0.1, 4, 0.1, 1.5), R(\release, 0.1, 4, 0.1, 2)]
+        presets: {小調: {notes: <[A1 E2 C3]>}, 高: {notes: <[D3 A3 D4]>, dur: 4}}
+  * name: \鼓組
+    sounds:
+      * name: \kick, desc: \大鼓, params: [R(\tune, 30, 120, 1, 50), R(\decay, 0.05, 1, 0.01, 0.3), R(\punch, 0, 1, 0.05, 0.5), pan]
+        presets: {808: {tune: 42, decay: 0.8, punch: 0.2}, 緊: {decay: 0.15, punch: 1}}
+      * name: \snare, desc: \小鼓, params: [R(\tune, 100, 400, 1, 180), R(\decay, 0.05, 0.5, 0.01, 0.15), R(\snappy, 0, 1, 0.05, 0.6), seed(101), pan]
+      * name: \hihat, desc: 'hi-hat', params: [R(\open, 0, 1, 0.05, 0), R(\tune, 0.5, 2, 0.05, 1), seed(103), pan]
+        presets: {開: {open: 0.7}}
+      * name: \tom, desc: '中鼓 / 落地鼓', params: [N(\note, \A2), R(\decay, 0.1, 1, 0.01, 0.35), seed(107), pan]
+        presets: {高: {note: \D3}, 落地: {note: \E2, decay: 0.6}}
+      * name: \clap, desc: \拍手, params: [R(\decay, 0.03, 0.5, 0.01, 0.12), seed(109)]
+      * name: \crash, desc: \碎音鈸, params: [R(\decay, 0.3, 3, 0.05, 1), R(\tune, 0.5, 2, 0.05, 1), seed(113)]
+        presets: {短: {decay: 0.5}, 大: {decay: 1.8, tune: 0.8}, 小: {decay: 0.6, tune: 1.4}}
+      * name: \ride, desc: \疊音鈸, params: [R(\decay, 0.3, 3, 0.05, 1), R(\bell, 0, 1, 0.05, 0), R(\tune, 0.5, 2, 0.05, 1), seed(127)]
+        presets: {鈸心: {bell: 1}, 短: {decay: 0.5}}
+      * name: \beat, desc: '節奏 ( 十六分音符一格 )'
+        params: [J(\pattern, ROCK), R(\bpm, 50, 200, 1, 100), R(\bars, 1, 8, 1, 1), R(\swing, 0, 1, 0.05, 0)] ++ rv!
+        presets:
+          搖滾: {pattern: ROCK, bars: 2}
+          四拍大鼓: {pattern: {kick: 'x...x...x...x...', clap: '....x.......x...', ohat: '..x...x...x...x.'}, bpm: 120, bars: 2}
+          Hip-hop: {pattern: {kick: 'x......x..x.....', snare: '....x.......x..o', hihat: 'x.x.x.x.x.x.x.x.'}, bpm: 88, swing: 0.5, bars: 2}
+          過門: {pattern: {kick: 'x...............', htom: 'x.x.x...........', tom: '......x.x.......', ltom: '..........x.x...', crash: '................|x'}, bpm: 110}
 
 sounds = []
 for g in groups
@@ -162,8 +258,9 @@ scene-src = '''
     "pop": ["pop", {}],
     "hi": ["pop", {"from": 600, "to": 1500}],
     "stamp": ["thump", {}],
-    "tune": ["melody", {"notes": [[0, "D4"], [0.3, "F4"], [0.6, "A4"], [0.9, "D5", 2]]}],
-    "ok": ["success", {}]
+    "tune": ["melody", {"instrument": "marimba", "notes": [[0, "D4"], [0.3, "F4"], [0.6, "A4"], [0.9, "D5", 2]]}],
+    "count": ["count", {"n": 10, "dur": 0.8}],
+    "ta": ["reveal", {}]
   },
   "timeline": [
     {"t": 0, "sound": "bed", "bus": "music", "gain": 0.35, "fadeIn": 1, "fadeOut": 2},
@@ -173,7 +270,8 @@ scene-src = '''
     {"t": 2.3, "sound": "hi"},
     {"t": 3.4, "sound": "stamp"},
     {"t": 4.4, "sound": "tune", "bus": "music", "gain": 0.7},
-    {"t": 6.6, "sound": "ok", "gain": 0.8}
+    {"t": 5.6, "sound": "count", "gain": 0.6, "align": "start"},
+    {"t": 6.6, "sound": "ta", "gain": 0.8}
   ]
 }
 '''
@@ -384,12 +482,21 @@ view = new ldview do
                 list: ({ctx}) -> if ctx => ctx.items else []
                 key: (.p.k)
                 view:
-                  init: input: ({node, ctx: {p}}) ->
-                    if p.type == \range
-                      node <<< type: \range, min: p.min, max: p.max, step: p.step
-                    else
-                      node.type = \text
-                      node.placeholder = p.hint or ''
+                  init:
+                    input: ({node, ctx: {p}}) ->
+                      if p.type == \select => node.remove!
+                      else if p.type == \range
+                        node <<< type: \range, min: p.min, max: p.max, step: p.step
+                      else
+                        node.type = \text
+                        node.placeholder = p.hint or ''
+                    select: ({node, ctx: {p}}) ->
+                      if p.type != \select => return node.remove!
+                      for v in p.options
+                        opt = document.createElement \option
+                        opt.value = v
+                        opt.textContent = if v == '' => '( 無 )' else v
+                        node.appendChild opt
                   text:
                     key: ({ctx: {p}}) -> p.k
                     val: ({ctx: {p, s}}) -> if p.type == \range => "#{value s, p}" else ''
@@ -402,6 +509,7 @@ view = new ldview do
                       else if node != document.activeElement
                         node.value = if !v? => '' else if p.type == \json => JSON.stringify(v) else "#v"
                         node.classList.remove \bad
+                    select: ({node, ctx: {p, s}}) -> if p.type == \select => node.value = value(s, p) or ''
                   action:
                     input: input: ({node, ctx: {p, s}}) ->
                       if p.type == \range
@@ -414,7 +522,13 @@ view = new ldview do
                         if !v? or same(v, p.def) => delete s.val[p.k] else s.val[p.k] = v
                       gen s
                       view.render!
-                    change: input: ({ctx: {s}}) -> audition s
+                    change:
+                      input: ({ctx: {s}}) -> audition s
+                      select: ({node, ctx: {p, s}}) ->
+                        if node.value == p.def or node.value == '' => delete s.val[p.k] else s.val[p.k] = node.value
+                        gen s
+                        view.render!
+                        audition s
               preset:
                 list: ({ctx}) -> if ctx => ctx.chips else []
                 key: (.label)
