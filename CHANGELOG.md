@@ -1,6 +1,6 @@
 # Change Logs
 
-## master
+## v0.0.3
 
  - feature: 變化機制 ( 預設不變 )
    - 所有合成聲可加 `vary` ( 0~1 ): 換雜訊、音高與長度微調、音量略小; 同 seed 可重現
