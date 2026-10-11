@@ -8,7 +8,7 @@
  - 離線混音：把時間軸混成一段音訊 ( 輸出影片配音用 )。
 
 試玩：`npm install`、`npx fedep`、`npm run build` 後 `npm start` ( 即 `npx server -r web -o true` )。
-頁面原始碼在 `web/src/pug`，建置到 `web/static`：每種合成聲都可以調參數試聽，也可以編輯一段時間軸播放、拖曳、倍速並混成 wav。
+頁面原始碼在 `web/src/pug`，建置到 `web/static`：音效清單 ( 點了就播，🎲 隨機變化 )、可編輯的五線譜、每種合成聲的參數試聽，以及可以播放、拖曳、倍速並混成 wav 的時間軸。
 
 
 ## 安裝與載入
@@ -130,7 +130,8 @@
 | `xylophone` | `dur` ( 0.8 ) | `note` ( C5 )、`hard` | 木琴 |
 | `vibraphone` | `dur` ( 3 ) | `note` ( F4 )、`hard`、`trem` ( 顫音深度 0.35 ) | 鐵琴 |
 | `glockenspiel` | `dur` ( 2 ) | `note` ( C6 )、`hard` | 鐘琴 |
-| `melody` | 自動 | `notes: [[t, note, dur, vel], ...]`、`instrument` ( pluck )、`bright`、`slide` | 旋律 |
+| `melody` | 自動 | `notes: [[t, note, dur, vel], ...]`、`instrument` ( pluck )、`release` ( 0.8 )、`bright`、`slide` | 旋律 |
+| `score` | 自動 | `score` ( 文字樂譜，見下方 )、`instrument`、`bpm`、`base`、`release` | 照樂譜演奏 |
 | `drone` | `dur` ( 8 ) | `notes` ( [A1, E2, A2] )、`attack`、`release` | 持續低音 |
 | `kick` | 自動 | `tune` ( 50 Hz )、`decay` ( 0.3 )、`punch` ( 0~1 ) | 大鼓 |
 | `snare` | 自動 | `tune` ( 180 Hz )、`decay` ( 0.15 )、`snappy` ( 0~1 ) | 小鼓 |
@@ -145,8 +146,56 @@
 
 人聲 ( `huh` `yay` ) 以共振峰合成：聲帶脈衝與氣音經過 4 個會移動的共振峰。`size` 是聲道大小 ( 小孩約 1.15，大人男聲約 0.9 )。聽得出是人聲，但偏卡通，不像真人錄音。
 
-全部的合成聲都可以加 `reverb` ( 0~1，濕聲比例 ) 與 `room` ( 0~1，空間大小 )，聲音會多出殘響的尾巴。
+全部的合成聲都可以加 `vary` ( 見下方「變化」)、`reverb` ( 0~1，濕聲比例 ) 與 `room` ( 0~1，空間大小 )，聲音會多出殘響的尾巴。
 已經有的 `AudioBuffer` 也可以用 `S.reverb(buffer, {mix, room})` 加殘響。
+
+### 樂譜
+
+用文字寫樂譜，指定任何聲音照著演奏：
+
+    S.load({tune: S.synth.score({score: 'C4/4 C4 G4 G4 | A4 A4 G4/2', instrument: 'marimba', bpm: 100})})
+
+ - 音名 + 八度 ( `C4`、`F#5`、`Bb3` )，`/n` 是音長 ( 1 全音符、2 二分、4 四分、8、16、32、64 )，後面加 `.` 是附點。
+ - `-` ( 或 `r` ) 是休止符，`C4+E4+G4` 是和弦，`|` 是小節線 ( 只是方便閱讀 )。音長沒寫就沿用前一個。
+ - `instrument`：有 `note` 參數的合成聲 ( pluck、marimba、guitar … ) 以音高合成每個音；
+   其他聲音 ( 例如 `pop`、`kick`，或載入的 `AudioBuffer` ) 以 `base` ( 預設 C4 ) 為準變調演奏。
+ - `bpm` ( 100 )、`release` ( 每個音之後保留的尾音，預設 0.1 秒 )；也可以加 `vary`、`reverb`。
+ - `S.score(text, {bpm})`：轉成 `melody` 的 `notes`；`S.score.parse(text)`：解析成 `[{notes, beats}]`；`S.score.duration(text, {bpm})`：秒數。
+
+demo 頁的五線譜可以直接編輯並產生這段樂譜文字。
+
+### 變化
+
+同一個聲音重複出現 ( 腳步、打字、點擊 ) 時，每次略有不同會比較自然。預設不變，要用時再加：
+
+ - 合成時加 `vary` ( 0~1 )：換一組雜訊，音高與長度微調 ( 1 約 ±1 個半音 )，音量略小。同樣的 `seed` 永遠是同樣的變化。
+
+        S.synth.pop({vary: 0.5, seed: 3})
+
+ - `S.variants(name, opt, count)`：一次產生 count 個變化 ( seed 1 ~ count，`vary` 預設 0.5 )。
+
+        const [a, b, c] = S.variants('steps', {n: 1}, 3)
+        S.load({step1: a, step2: b, step3: c})
+
+ - 時間軸項目的 `sound` 可以是陣列，依項目的位置與時間挑一個；加 `vary` 則每個項目的音高與音量略有不同。
+   兩者都可重現：拖曳、重播、離線混音結果都一樣。
+
+        S.timeline([
+          {t: 1.0, sound: ['step1', 'step2', 'step3'], vary: 0.3},
+          {t: 1.5, sound: ['step1', 'step2', 'step3'], vary: 0.3}
+        ])
+
+ - `S.play(name, {vary})` 與 `S.play([...names])`：互動用，每次隨機 ( 不可重現 )。
+
+ - `S.mutate(name, opt, {amount, seed})`：以目前的參數 ( 沒給的用預設 ) 為中心，產生一組變化的參數。
+   數值依常態分布微調 ( σ = amount × 範圍 × 0.15 )，選項 ( 例如 `style`、`chord`、`surface` ) 以 amount × 2 的機率隨機挑，
+   音名移幾個半音，並換 `seed`、加上 `vary`。`amount` 預設 0.5；給 `seed` 就可重現。
+
+        S.synth.correct(S.mutate('correct'))                  // 可能是 pingpong 也可能是 arp
+        S.synth.whoosh(S.mutate('whoosh', {dur: 0.4}, {amount: 0.3, seed: 7}))
+
+ - `S.params[name]`：每種合成聲的參數定義 `[{k, type: range | note | select | json, min, max, step, def, options}]`，
+   demo 頁的控制項也是由它產生。
 
 `melody` 的 `instrument` 可以是任何有 `note` 參數的聲音：`pluck` ( 預設 )、`guitar`、`marimba`、`xylophone`、`vibraphone`、`glockenspiel`、`chime`、`bell`。
 

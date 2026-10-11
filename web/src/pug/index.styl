@@ -58,22 +58,6 @@ code
     display: flex
     gap: 16px
     padding-top: 10px
-  .mixer
-    grid-column: 1 / -1
-    display: flex
-    flex-wrap: wrap
-    gap: 8px 24px
-  .bus
-    display: flex
-    align-items: center
-    gap: 8px
-    label
-      margin: 0
-      font-size: 13px
-      color: var(--muted)
-      min-width: 3.5em
-    input
-      width: 110px
 
 input[type=range]
   accent-color: var(--accent)
@@ -94,6 +78,188 @@ section
     margin: 0
     color: var(--muted)
     max-width: 48em
+
+// 還沒畫好之前先隱藏, 避免閃出 ldview 的空模板
+body:not(.ready) .page
+  visibility: hidden
+
+.quick-group
+  display: grid
+  grid-template-columns: 7.5em 1fr
+  gap: 8px
+  align-items: start
+  padding: 8px 0
+  border-top: 1px solid var(--line)
+.quick-name
+  font-size: 13px
+  font-weight: 600
+  color: var(--muted)
+  padding-top: 4px
+.quick-list
+  display: flex
+  flex-wrap: wrap
+  gap: 6px
+.lastvar
+  display: block
+  margin-top: 6px
+  min-height: 1.5em
+  color: var(--accent)
+.qitem
+  display: inline-flex
+  align-items: stretch
+.qdice
+  border: 1px solid var(--line)
+  border-left: 0
+  border-radius: 0 6px 6px 0
+  padding: 3px 7px
+  cursor: pointer
+  user-select: none
+  font-size: 12px
+  &:hover
+    background: var(--field)
+  &.on
+    background: var(--accent)
+    border-color: var(--accent)
+.qitem .qchip
+  border-radius: 6px 0 0 6px
+.qchip
+  display: inline-flex
+  align-items: baseline
+  gap: 6px
+  border: 1px solid var(--line)
+  background: var(--card)
+  border-radius: 6px
+  padding: 3px 10px
+  cursor: pointer
+  user-select: none
+  &:hover
+    border-color: var(--muted)
+  &.on
+    border-color: var(--accent)
+    background: var(--accent)
+    color: var(--accent-fg)
+    .qdesc
+      color: inherit
+  .qname
+    font: 600 12px ui-monospace, Menlo, monospace
+  .qdesc
+    font-size: 12px
+    color: var(--muted)
+
+.staff-wrap
+  background: var(--card)
+  border: 1px solid var(--line)
+  border-radius: 10px
+  padding: 12px 16px 14px
+  display: flex
+  flex-direction: column
+  gap: 10px
+.staff-box
+  border-radius: 6px
+  outline: none
+  &:focus
+    box-shadow: 0 0 0 2px var(--accent)
+  svg
+    width: 100%
+    display: block
+    touch-action: none
+    user-select: none
+    .line, .bar, .ledger, .stem
+      stroke: var(--fg)
+      stroke-width: 1
+    .bar.end
+      stroke-width: 3
+    .clef
+      font-size: 64px
+      fill: var(--fg)
+    .meter
+      font: 700 22px Georgia, serif
+      fill: var(--fg)
+    .ev
+      fill: var(--fg)
+      stroke: var(--fg)
+      .fill
+        stroke: none
+      .hollow
+        fill: none
+        stroke-width: 1.6
+      .flag
+        fill: none
+        stroke-width: 1.6
+      rect
+        stroke: none
+    .ev.sel
+      fill: var(--accent)
+      stroke: var(--accent)
+      .ledger, .stem
+        stroke: var(--accent)
+    .ev.on
+      fill: var(--wave-hot)
+      stroke: var(--wave-hot)
+    .hitbox
+      fill: transparent
+      cursor: ns-resize
+    .selbox
+      fill: var(--field)
+.score-row
+  display: flex
+  align-items: center
+  gap: 8px
+  label
+    margin: 0
+    font-size: 13px
+    color: var(--muted)
+  input
+    flex: 1
+    min-width: 0
+    border: 1px solid var(--line)
+    background: var(--field)
+    color: var(--fg)
+    border-radius: 4px
+    padding: 4px 8px
+    font: 13px ui-monospace, Menlo, monospace
+    &.bad
+      border-color: var(--accent)
+.staff-keys
+  display: flex
+  flex-wrap: wrap
+  gap: 4px 16px
+  font-size: 12px
+  color: var(--muted)
+  kbd
+    font: 11px ui-monospace, Menlo, monospace
+    border: 1px solid var(--line)
+    border-bottom-width: 2px
+    border-radius: 4px
+    padding: 0 4px
+    margin: 0 2px
+    background: var(--field)
+    color: var(--fg)
+.staff-ctrl
+  display: flex
+  flex-wrap: wrap
+  align-items: center
+  gap: 8px
+  label
+    margin: 0 0 0 8px
+    font-size: 13px
+    color: var(--muted)
+  select
+    border: 1px solid var(--line)
+    background: var(--field)
+    color: var(--fg)
+    border-radius: 4px
+    padding: 2px 6px
+    font: 12px ui-monospace, Menlo, monospace
+  .bpm
+    width: 110px
+  .sel-info
+    font: 12px ui-monospace, Menlo, monospace
+    color: var(--muted)
+    margin-left: 8px
+  .msg
+    font-size: 12px
+    color: var(--accent)
 
 .group
   margin-top: 24px
@@ -246,6 +412,29 @@ button
   flex-direction: column
   gap: 12px
 
+.mixer-row
+  display: flex
+  flex-direction: column
+  gap: 6px
+.mixer-hint
+  font-size: 12px
+  color: var(--muted)
+.mixer
+  display: flex
+  flex-wrap: wrap
+  gap: 8px 24px
+.bus
+  display: flex
+  align-items: center
+  gap: 8px
+  label
+    margin: 0
+    font-size: 13px
+    color: var(--muted)
+    min-width: 3.5em
+  input
+    width: 110px
+
 .stage
   display: flex
   flex-wrap: wrap
@@ -342,6 +531,8 @@ footer
   gap: 6px
 
 @media (max-width: 640px)
+  .quick-group
+    grid-template-columns: 1fr
   .hero
     grid-template-columns: 1fr
     .links

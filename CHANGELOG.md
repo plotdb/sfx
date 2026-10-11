@@ -1,5 +1,23 @@
 # Change Logs
 
+## master
+
+ - feature: 變化機制 ( 預設不變 )
+   - 所有合成聲可加 `vary` ( 0~1 ): 換雜訊、音高與長度微調、音量略小; 同 seed 可重現
+   - `S.variants(name, opt, count)`: 一次產生多個變化
+   - 時間軸項目的 `sound` 可為陣列 ( 依位置與時間挑一個 ), 項目可加 `vary`; 皆可重現, 離線混音一致
+   - `S.play` 可給陣列與 `vary` ( 隨機 )
+   - `S.mutate(name, opt, {amount, seed})`: 以目前參數為中心產生變化的參數 ( 數值常態分布、選項隨機挑 )
+ - feature: `S.params[name]`: 每種合成聲的參數定義 ( 範圍、預設、選項 ), demo 頁由它產生控制項
+ - feature: demo 頁最上面加上全部音效的清單: 點名稱播預設, 點 🎲 播隨機變化; 每張卡片加 `vary` 與 🎲 ( 以目前設定為中心變化 )
+ - feature: 樂譜: `S.synth.score({score, instrument, bpm})` 依文字樂譜 ( `C4/4 D4 E4/8. ...` ) 用任何聲音演奏
+   ( 有 note 參數的合成聲以音高合成, 其他聲音以 base 為準變調 ); `S.score` / `S.score.parse` / `S.score.duration`
+ - feature: `synth.melody` 新增 `release` ( 每個音之後的尾音, 預設 0.8 不變 )
+ - feature: demo 頁新增五線譜 ( 4/4 拍 4 小節, 鍵盤編輯音長 / 附點 / 休止、拖曳改音高, 與樂譜文字雙向同步, 選樂器或 🎲 隨機 )
+ - tweak: demo 頁標題改為「音效清單」與「全部音效：合成細節」
+ - tweak: demo 頁先畫畫面再分批產生聲音, 並在畫好前隱藏, 不再閃出空的模板
+
+
 ## v0.0.2
 
  - feature: 新增合成聲

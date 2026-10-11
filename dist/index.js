@@ -1,6 +1,6 @@
 (function(){
   (function(){
-    var SR, S, ctx, bus, isBuffer, peaks, voice, mediaVoice, stopVoice, currentMusic, stopTimeline, startTimeline, hook, NOTES, rng, make, coef, biquad, biquadTv, noise, env, pan, synth, place, partial, fadeOut, wander, glideOsc, COMB, ALLPASS, reverb, glide, grain, pick, bubble, SURFACE, pink, formantVoice, mix, ease, bar, CHORDS, string, metal, ring, gauss, KIT, VEL, wrap, k;
+    var SR, S, ctx, bus, isBuffer, peaks, voice, mediaVoice, stopVoice, jitter, currentMusic, stopTimeline, startTimeline, hook, NOTES, rng, make, coef, biquad, biquadTv, noise, env, pan, synth, place, partial, fadeOut, wander, glideOsc, COMB, ALLPASS, reverb, glide, grain, pick, bubble, SURFACE, pink, formantVoice, mix, ease, bar, CHORDS, string, metal, ring, gauss, KIT, VEL, parseScore, TWINKLE, resample, wrap, k, PARAMS, name, spec, v, SEMI, NAMES, transpose;
     if (typeof window !== 'undefined' && window.sfx) {
       return;
     }
@@ -289,10 +289,23 @@
         return e = e$;
       }
     };
+    jitter = function(vary, h1, h2){
+      return {
+        rate: Math.pow(2, (h1 * 2 - 1) * vary / 12),
+        gain: 1 - vary * 0.3 * h2
+      };
+    };
     S.play = function(name, opt){
-      var v;
+      var j, ref$, v;
       opt == null && (opt = {});
       S.resume();
+      if (Array.isArray(name)) {
+        name = name[Math.floor(Math.random() * name.length)];
+      }
+      if (opt.vary) {
+        j = jitter(opt.vary, Math.random(), Math.random());
+        opt = (ref$ = import$({}, opt), ref$.rate = (opt.rate || 1) * j.rate, ref$.gain = (opt.gain != null ? opt.gain : 1) * j.gain, ref$);
+      }
       v = voice(name, opt);
       if (!v) {
         return null;
@@ -345,8 +358,22 @@
     };
     S.timeline = function(items){
       items == null && (items = []);
-      S.items = items.map(function(it){
-        return import$({}, it);
+      S.items = items.map(function(it, k){
+        var h, j;
+        it = import$({}, it);
+        if (Array.isArray(it.sound) || it.vary) {
+          h = rng(((k + 1) * 2654435761 ^ Math.round((it.t || 0) * 1000) * 40503) >>> 0);
+          h();
+          if (Array.isArray(it.sound)) {
+            it.sound = it.sound[Math.floor(h() * it.sound.length)];
+          }
+          if (it.vary) {
+            j = jitter(it.vary, h(), h());
+            it.rate = (it.rate || 1) * j.rate;
+            it.gain = (it.gain != null ? it.gain : 1) * j.gain;
+          }
+        }
+        return it;
       });
       if (S.playing) {
         S.transport({
@@ -1057,9 +1084,10 @@
       });
     };
     synth.melody = function(o){
-      var seq, dur, inst, voices;
+      var seq, rel, dur, inst, voices;
       o == null && (o = {});
       seq = o.notes || [];
+      rel = o.release != null ? o.release : 0.8;
       dur = o.dur || Math.max.apply(Math, seq.map(function(x){
         return x[0] + (x[2] || 1.5);
       })) + 1;
@@ -1078,7 +1106,7 @@
         return [
           x, synth[inst](import$({
             note: x[1],
-            dur: (x[2] || 1.5) + 0.8,
+            dur: (x[2] || 1.5) + rel,
             seed: 31 + k
           }, opt))
         ];
@@ -2644,11 +2672,143 @@
         return pan(L, R, d, o.pan);
       });
     };
+    parseScore = function(text){
+      var beats, out, i$, ref$, len$, tok, m, b, notes, ref1$, j$, len1$, nm;
+      text == null && (text = '');
+      beats = 1;
+      out = [];
+      for (i$ = 0, len$ = (ref$ = text.split(/\s+/)).length; i$ < len$; ++i$) {
+        tok = ref$[i$];
+        if (tok && tok !== '|') {
+          m = /^([^\/]+?)(?:\/(\d+))?(\.*)$/.exec(tok);
+          if (!m) {
+            throw new Error("看不懂的樂譜: " + tok);
+          }
+          if (m[2]) {
+            beats = 4 / +m[2];
+          }
+          b = beats * (m[3].length === 1
+            ? 1.5
+            : m[3].length >= 2 ? 1.75 : 1);
+          notes = (ref1$ = m[1]) === '-' || ref1$ === 'r' || ref1$ === 'R'
+            ? []
+            : m[1].split('+');
+          for (j$ = 0, len1$ = notes.length; j$ < len1$; ++j$) {
+            nm = notes[j$];
+            if (!/^[A-G](#|b)?-?\d$/.test(nm)) {
+              throw new Error("看不懂的音名: " + nm);
+            }
+          }
+          out.push({
+            notes: notes,
+            beats: b
+          });
+        }
+      }
+      return out;
+    };
+    S.score = function(text, o){
+      var spb, t, out, i$, ref$, len$, x, j$, ref1$, len1$, nm;
+      o == null && (o = {});
+      spb = 60 / (o.bpm || 100);
+      t = 0;
+      out = [];
+      for (i$ = 0, len$ = (ref$ = parseScore(text)).length; i$ < len$; ++i$) {
+        x = ref$[i$];
+        for (j$ = 0, len1$ = (ref1$ = x.notes).length; j$ < len1$; ++j$) {
+          nm = ref1$[j$];
+          out.push([+(t * spb).toFixed(4), nm, +(x.beats * spb * 0.92).toFixed(4)]);
+        }
+        t += x.beats;
+      }
+      return out;
+    };
+    S.score.parse = parseScore;
+    S.score.duration = function(text, o){
+      o == null && (o = {});
+      return parseScore(text).reduce(function(a, x){
+        return a + x.beats;
+      }, 0) * 60 / (o.bpm || 100);
+    };
+    TWINKLE = 'C4/4 C4 G4 G4 | A4 A4 G4/2 | F4/4 F4 E4 E4 | D4 D4 C4/2';
+    synth.score = function(o){
+      var text, notes, total, inst, rel, pitched, src, base, cache;
+      o == null && (o = {});
+      text = o.score || TWINKLE;
+      notes = S.score(text, {
+        bpm: o.bpm
+      });
+      total = S.score.duration(text, {
+        bpm: o.bpm
+      });
+      inst = o.instrument || 'pluck';
+      rel = o.release != null ? o.release : 0.1;
+      pitched = typeof inst === 'string' && S.params[inst] && S.params[inst].some(function(p){
+        return p.k === 'note';
+      });
+      if (pitched) {
+        return synth.melody({
+          notes: notes,
+          instrument: inst,
+          release: rel,
+          dur: total + rel + 1
+        });
+      }
+      src = isBuffer(inst)
+        ? inst
+        : synth[inst]
+          ? synth[inst]({})
+          : synth.pluck({});
+      base = S.freq(o.base || 'C4');
+      cache = {};
+      return make(total + src.duration * 2 + 0.1, function(L, R, n){
+        var i$, ref$, len$, ref1$, t, nm, ratio, results$ = [];
+        for (i$ = 0, len$ = (ref$ = notes).length; i$ < len$; ++i$) {
+          ref1$ = ref$[i$], t = ref1$[0], nm = ref1$[1];
+          ratio = S.freq(nm) / base;
+          cache[nm] == null && (cache[nm] = resample(src, ratio, 1));
+          results$.push(place(L, R, cache[nm], t, 0.8));
+        }
+        return results$;
+      });
+    };
+    resample = function(buf, rate, gain){
+      var src, m, n, out, i$, ch, d, x, j$, i, p, j, f;
+      src = [buf.getChannelData(0), buf.getChannelData(1)];
+      m = buf.length;
+      n = Math.max(1, Math.round(m / rate));
+      out = new AudioBuffer({
+        length: n,
+        sampleRate: SR,
+        numberOfChannels: 2
+      });
+      for (i$ = 0; i$ < 2; ++i$) {
+        ch = i$;
+        d = new Float32Array(n);
+        x = src[ch];
+        for (j$ = 0; j$ < n; ++j$) {
+          i = j$;
+          p = i * rate;
+          j = Math.floor(p);
+          f = p - j;
+          d[i] = ((x[j] || 0) * (1 - f) + (x[j + 1] || 0) * f) * gain;
+        }
+        out.copyToChannel(d, ch);
+      }
+      return out;
+    };
     wrap = function(fn){
       return function(o){
-        var b, mix;
+        var v, j, b, ref$, mix;
         o == null && (o = {});
-        b = fn(o);
+        if (o.vary) {
+          v = rng((o.seed || 1) * 7919 + 13);
+          j = jitter(o.vary, v(), v());
+          b = fn((ref$ = import$({}, o), ref$.seed = (o.seed || 1) * 1009 + 1 + Math.floor(v() * 1e5), ref$));
+          b = resample(b, j.rate, j.gain);
+        } else {
+          b = fn(o);
+        }
         mix = o.reverb != null
           ? o.reverb
           : fn.reverb || 0;
@@ -2662,11 +2822,591 @@
     for (k in synth) {
       synth[k] = wrap(synth[k]);
     }
+    S.variants = function(name, opt, count){
+      var i$, k, ref$, results$ = [];
+      opt == null && (opt = {});
+      count == null && (count = 4);
+      for (i$ = 0; i$ < count; ++i$) {
+        k = i$;
+        results$.push(synth[name]((ref$ = import$({
+          vary: 0.5
+        }, opt), ref$.seed = (opt.seed || 0) + k + 1, ref$)));
+      }
+      return results$;
+    };
+    PARAMS = {
+      click: {
+        freq: [500, 5000, 10, 2000],
+        seed: [1, 99, 1, 7],
+        pan: [-1, 1, 0.05, 0]
+      },
+      tick: {
+        note: {
+          note: null,
+          hint: "1800 Hz"
+        },
+        pan: [-1, 1, 0.05, 0]
+      },
+      pop: {
+        from: [100, 2000, 10, 380],
+        to: [100, 3000, 10, 900],
+        pan: [-1, 1, 0.05, 0]
+      },
+      toggle: {
+        pan: [-1, 1, 0.05, 0]
+      },
+      type: {
+        seed: [1, 99, 1, 11]
+      },
+      thump: {
+        seed: [1, 99, 1, 5],
+        pan: [-1, 1, 0.05, 0]
+      },
+      snap: {
+        seed: [1, 99, 1, 41],
+        pan: [-1, 1, 0.05, 0]
+      },
+      chime: {
+        note: {
+          note: "E6"
+        },
+        dur: [0.3, 4, 0.1, 1.4],
+        pan: [-1, 1, 0.05, 0],
+        reverb: [0, 1, 0.05, 0],
+        room: [0, 1, 0.05, 0.5]
+      },
+      success: {
+        pan: [-1, 1, 0.05, 0],
+        reverb: [0, 1, 0.05, 0],
+        room: [0, 1, 0.05, 0.5]
+      },
+      notify: {
+        pan: [-1, 1, 0.05, 0],
+        reverb: [0, 1, 0.05, 0],
+        room: [0, 1, 0.05, 0.5]
+      },
+      error: {
+        from: {
+          note: "B3"
+        },
+        to: {
+          note: "F3"
+        },
+        pan: [-1, 1, 0.05, 0]
+      },
+      correct: {
+        style: {
+          options: ["pingpong", "arp"],
+          def: "pingpong"
+        },
+        notes: {
+          json: null
+        },
+        gap: [0.03, 0.4, 0.01, 0.2],
+        pan: [-1, 1, 0.05, 0],
+        reverb: [0, 1, 0.05, 0.15],
+        room: [0, 1, 0.05, 0.5]
+      },
+      wrong: {
+        style: {
+          options: ["buzzer", "trombone"],
+          def: "buzzer"
+        },
+        pitch: [60, 400, 1, 140],
+        pan: [-1, 1, 0.05, 0]
+      },
+      reveal: {
+        notes: {
+          json: ["C6", "E6", "G6", "C7", "E7"]
+        },
+        gap: [0.02, 0.2, 0.01, 0.06],
+        seed: [1, 99, 1, 53],
+        pan: [-1, 1, 0.05, 0],
+        reverb: [0, 1, 0.05, 0.35],
+        room: [0, 1, 0.05, 0.5]
+      },
+      whoosh: {
+        dur: [0.1, 2, 0.05, 0.7],
+        from: [50, 5000, 10, 400],
+        peak: [50, 6000, 10, 2600],
+        to: [50, 5000, 10, 600],
+        at: [0.05, 0.95, 0.01, 0.45],
+        q: [0.3, 6, 0.1, 1.2],
+        seed: [1, 99, 1, 3]
+      },
+      swell: {
+        dur: [0.5, 6, 0.1, 2],
+        seed: [1, 99, 1, 23]
+      },
+      slide: {
+        dur: [0.1, 1, 0.05, 0.3],
+        from: [100, 6000, 10, 900],
+        to: [100, 6000, 10, 2600],
+        q: [0.3, 4, 0.1, 0.9],
+        dir: [-1, 1, 0.1, 1],
+        seed: [1, 99, 1, 37]
+      },
+      rise: {
+        from: {
+          note: null,
+          hint: "300 Hz"
+        },
+        to: {
+          note: null,
+          hint: "900 Hz"
+        },
+        dur: [0.1, 3, 0.05, 0.6],
+        pan: [-1, 1, 0.05, 0]
+      },
+      fall: {
+        from: {
+          note: null,
+          hint: "900 Hz"
+        },
+        to: {
+          note: null,
+          hint: "250 Hz"
+        },
+        dur: [0.1, 3, 0.05, 0.6],
+        pan: [-1, 1, 0.05, 0]
+      },
+      count: {
+        n: [2, 40, 1, 12],
+        dur: [0.2, 4, 0.1, 1.2],
+        ease: {
+          options: ["out", "in", "linear"],
+          def: "out"
+        },
+        climb: [0, 24, 1, 7],
+        note: {
+          note: "C6"
+        },
+        pan: [-1, 1, 0.05, 0]
+      },
+      draw: {
+        dur: [0.2, 4, 0.1, 1],
+        rough: [0, 1, 0.05, 0.5],
+        pitch: [500, 8000, 50, 2500],
+        seed: [1, 99, 1, 43],
+        pan: [-1, 1, 0.05, 0]
+      },
+      glitch: {
+        dur: [0.1, 2, 0.05, 0.5],
+        seed: [1, 99, 1, 47]
+      },
+      sweep: {
+        wave: {
+          options: ["sine", "triangle", "square", "saw", "noise"],
+          def: "sine"
+        },
+        curve: {
+          options: ["exp", "lin"],
+          def: "exp"
+        },
+        from: {
+          note: null,
+          hint: "200 Hz"
+        },
+        to: {
+          note: null,
+          hint: "2000 Hz"
+        },
+        dur: [0.1, 4, 0.05, 1],
+        q: [0.3, 10, 0.1, 2],
+        attack: [0, 1, 0.01, 0.01],
+        release: [0, 2, 0.01, 0.1],
+        pan: [-1, 1, 0.05, 0]
+      },
+      tension: {
+        note: {
+          note: "A2"
+        },
+        dur: [1, 12, 0.5, 6]
+      },
+      heartbeat: {
+        bpm: [40, 180, 1, 70],
+        dur: [1, 10, 0.5, 4],
+        pan: [-1, 1, 0.05, 0]
+      },
+      clock: {
+        bpm: [30, 240, 1, 60],
+        dur: [1, 10, 0.5, 4],
+        seed: [1, 99, 1, 59],
+        pan: [-1, 1, 0.05, 0]
+      },
+      fingersnap: {
+        tone: [2000, 5000, 10, 3200],
+        seed: [1, 99, 1, 137],
+        pan: [-1, 1, 0.05, 0]
+      },
+      huh: {
+        pitch: [80, 400, 1, 200],
+        rise: [1, 3, 0.05, 1.9],
+        dur: [0.2, 1, 0.01, 0.45],
+        size: [0.8, 1.3, 0.01, 1],
+        seed: [1, 99, 1, 151]
+      },
+      yay: {
+        pitch: [100, 500, 1, 300],
+        dur: [0.2, 1.2, 0.01, 0.5],
+        size: [0.8, 1.3, 0.01, 1],
+        seed: [1, 99, 1, 157]
+      },
+      paper: {
+        dur: [0.4, 2.5, 0.05, 1.2],
+        crisp: [0, 3, 0.1, 1],
+        flutter: [0, 1, 0.05, 0.6],
+        seed: [1, 99, 1, 61]
+      },
+      water: {
+        n: [1, 300, 1, 1],
+        size: [0.5, 10, 0.1, 3],
+        rise: [0, 1, 0.05, 0.05],
+        dur: [0.2, 10, 0.1, 0.4],
+        seed: [1, 99, 1, 67]
+      },
+      fire: {
+        dur: [1, 10, 0.5, 6],
+        density: [0, 4, 0.1, 1],
+        seed: [1, 99, 1, 71]
+      },
+      steps: {
+        surface: {
+          options: ["wood", "concrete", "gravel", "snow", "grass"],
+          def: "wood"
+        },
+        gait: {
+          options: ["walk", "run"],
+          def: "walk"
+        },
+        n: [1, 12, 1, 4],
+        pace: [0.2, 1.2, 0.05, 0.5],
+        seed: [1, 99, 1, 73]
+      },
+      bell: {
+        note: {
+          note: "C5"
+        },
+        dur: [1, 10, 0.5, 5],
+        pan: [-1, 1, 0.05, 0],
+        reverb: [0, 1, 0.05, 0.2],
+        room: [0, 1, 0.05, 0.5]
+      },
+      thunder: {
+        dur: [2, 12, 0.5, 6],
+        dist: [0, 1, 0.05, 0.5],
+        seed: [1, 99, 1, 79]
+      },
+      wind: {
+        dur: [1, 10, 0.5, 6],
+        cutoff: [200, 3000, 10, 900],
+        seed: [1, 99, 1, 17]
+      },
+      rain: {
+        dur: [1, 10, 0.5, 6],
+        density: [0.002, 0.2, 0.002, 0.02],
+        seed: [1, 99, 1, 19]
+      },
+      buzz: {
+        dur: [0.2, 4, 0.1, 1.5],
+        freq: [80, 600, 1, 220],
+        pan: [-1, 1, 0.05, 0]
+      },
+      pluck: {
+        note: {
+          note: "A3"
+        },
+        dur: [0.3, 5, 0.1, 2.5],
+        bright: [0, 1, 0.05, 0.6],
+        slide: [0, 3, 0.1, 0.6],
+        seed: [1, 99, 1, 13],
+        pan: [-1, 1, 0.05, 0],
+        reverb: [0, 1, 0.05, 0],
+        room: [0, 1, 0.05, 0.5]
+      },
+      guitar: {
+        note: {
+          note: "E3"
+        },
+        chord: {
+          options: ["", "C", "D", "Dm", "E", "Em", "F", "G", "A", "Am"],
+          def: ""
+        },
+        notes: {
+          json: null
+        },
+        dir: {
+          options: ["down", "up"],
+          def: "down"
+        },
+        strum: [0, 0.1, 0.005, 0.03],
+        dur: [0.5, 6, 0.1, 3],
+        bright: [0, 1, 0.05, 0.5],
+        pos: [0.05, 0.5, 0.01, 0.2],
+        mute: [0, 1, 0.05, 0],
+        seed: [1, 99, 1, 89],
+        pan: [-1, 1, 0.05, 0],
+        reverb: [0, 1, 0.05, 0],
+        room: [0, 1, 0.05, 0.5]
+      },
+      marimba: {
+        note: {
+          note: "C4"
+        },
+        dur: [0.3, 4, 0.1, 1.5],
+        hard: [0, 1, 0.05, 0.5],
+        pan: [-1, 1, 0.05, 0],
+        reverb: [0, 1, 0.05, 0],
+        room: [0, 1, 0.05, 0.5]
+      },
+      xylophone: {
+        note: {
+          note: "C5"
+        },
+        dur: [0.2, 3, 0.1, 0.8],
+        hard: [0, 1, 0.05, 0.5],
+        pan: [-1, 1, 0.05, 0],
+        reverb: [0, 1, 0.05, 0],
+        room: [0, 1, 0.05, 0.5]
+      },
+      vibraphone: {
+        note: {
+          note: "F4"
+        },
+        dur: [0.5, 6, 0.1, 3],
+        trem: [0, 1, 0.05, 0.35],
+        hard: [0, 1, 0.05, 0.5],
+        pan: [-1, 1, 0.05, 0],
+        reverb: [0, 1, 0.05, 0],
+        room: [0, 1, 0.05, 0.5]
+      },
+      glockenspiel: {
+        note: {
+          note: "C6"
+        },
+        dur: [0.3, 4, 0.1, 2],
+        hard: [0, 1, 0.05, 0.5],
+        pan: [-1, 1, 0.05, 0],
+        reverb: [0, 1, 0.05, 0],
+        room: [0, 1, 0.05, 0.5]
+      },
+      score: {
+        score: {
+          text: "C4/4 C4 G4 G4 | A4 A4 G4/2 | F4/4 F4 E4 E4 | D4 D4 C4/2"
+        },
+        instrument: {
+          options: ["pluck", "marimba", "xylophone", "vibraphone", "glockenspiel", "guitar", "chime", "bell", "pop", "tick", "kick", "tom", "water"],
+          def: "pluck"
+        },
+        bpm: [40, 240, 1, 100],
+        base: {
+          note: "C4"
+        },
+        release: [0.02, 2, 0.01, 0.1]
+      },
+      melody: {
+        notes: {
+          json: [[0, "A3"], [0.4, "C4"], [0.8, "E4"], [1.2, "A4", 2]]
+        },
+        instrument: {
+          options: ["pluck", "marimba", "xylophone", "vibraphone", "glockenspiel", "guitar", "chime", "bell"],
+          def: "pluck"
+        },
+        release: [0.02, 2, 0.01, 0.8],
+        bright: [0, 1, 0.05, 0.6],
+        slide: [0, 3, 0.1, 0.6],
+        reverb: [0, 1, 0.05, 0],
+        room: [0, 1, 0.05, 0.5]
+      },
+      drone: {
+        notes: {
+          json: ["A1", "E2", "A2"]
+        },
+        dur: [1, 12, 0.5, 8],
+        attack: [0.1, 4, 0.1, 1.5],
+        release: [0.1, 4, 0.1, 2]
+      },
+      kick: {
+        tune: [30, 120, 1, 50],
+        decay: [0.05, 1, 0.01, 0.3],
+        punch: [0, 1, 0.05, 0.5],
+        pan: [-1, 1, 0.05, 0]
+      },
+      snare: {
+        tune: [100, 400, 1, 180],
+        decay: [0.05, 0.5, 0.01, 0.15],
+        snappy: [0, 1, 0.05, 0.6],
+        seed: [1, 99, 1, 101],
+        pan: [-1, 1, 0.05, 0]
+      },
+      hihat: {
+        open: [0, 1, 0.05, 0],
+        tune: [0.5, 2, 0.05, 1],
+        seed: [1, 99, 1, 103],
+        pan: [-1, 1, 0.05, 0]
+      },
+      tom: {
+        note: {
+          note: "A2"
+        },
+        decay: [0.1, 1, 0.01, 0.35],
+        seed: [1, 99, 1, 107],
+        pan: [-1, 1, 0.05, 0]
+      },
+      clap: {
+        decay: [0.03, 0.5, 0.01, 0.12],
+        seed: [1, 99, 1, 109]
+      },
+      crash: {
+        decay: [0.3, 3, 0.05, 1],
+        tune: [0.5, 2, 0.05, 1],
+        seed: [1, 99, 1, 113]
+      },
+      ride: {
+        decay: [0.3, 3, 0.05, 1],
+        bell: [0, 1, 0.05, 0],
+        tune: [0.5, 2, 0.05, 1],
+        seed: [1, 99, 1, 127]
+      },
+      beat: {
+        pattern: {
+          json: {
+            "kick": "x.......x.x.....",
+            "snare": "....x.......x...",
+            "hihat": "x.x.x.x.x.x.x.x."
+          }
+        },
+        bpm: [50, 200, 1, 100],
+        bars: [1, 8, 1, 1],
+        swing: [0, 1, 0.05, 0],
+        reverb: [0, 1, 0.05, 0],
+        room: [0, 1, 0.05, 0.5]
+      }
+    };
+    S.params = {};
+    for (name in PARAMS) {
+      spec = PARAMS[name];
+      S.params[name] = (fn$());
+    }
+    SEMI = {
+      C: 0,
+      D: 2,
+      E: 4,
+      F: 5,
+      G: 7,
+      A: 9,
+      B: 11
+    };
+    NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+    transpose = function(note, semi){
+      var m, midi;
+      if (typeof note === 'number') {
+        return Math.round(note * Math.pow(2, semi / 12));
+      }
+      m = /^([A-G])(#|b)?(-?\d)$/.exec(note);
+      if (!m) {
+        return note;
+      }
+      midi = 12 * (+m[3] + 1) + SEMI[m[1]] + (m[2] === '#'
+        ? 1
+        : m[2] === 'b' ? -1 : 0) + semi;
+      return NAMES[(midi % 12 + 12) % 12] + (Math.floor(midi / 12) - 1);
+    };
+    S.mutate = function(name, opt, cfg){
+      var amount, r, out, i$, ref$, len$, p, ref1$, cur, v, semi;
+      opt == null && (opt = {});
+      cfg == null && (cfg = {});
+      amount = cfg.amount != null ? cfg.amount : 0.5;
+      r = cfg.seed != null
+        ? rng(cfg.seed)
+        : Math.random;
+      out = import$({}, opt);
+      for (i$ = 0, len$ = (ref$ = S.params[name] || []).length; i$ < len$; ++i$) {
+        p = ref$[i$];
+        if ((ref1$ = p.k) !== 'seed' && ref1$ !== 'pan' && ref1$ !== 'reverb' && ref1$ !== 'room' && ref1$ !== 'vary') {
+          cur = opt[p.k] != null
+            ? opt[p.k]
+            : p.def;
+          switch (p.type) {
+          case 'range':
+            v = cur + gauss(r) * amount * (p.max - p.min) * 0.15;
+            v = +(Math.round(Math.max(p.min, Math.min(p.max, v)) / p.step) * p.step).toFixed(4);
+            if (v === p.def) {
+              delete out[p.k];
+            } else {
+              out[p.k] = v;
+            }
+            break;
+          case 'select':
+            if (r() < amount * 2) {
+              out[p.k] = p.options[Math.floor(r() * p.options.length)];
+            }
+            if (out[p.k] === p.def) {
+              delete out[p.k];
+            }
+            break;
+          case 'note':
+            semi = Math.round(gauss(r) * amount * 2);
+            if (cur != null && semi) {
+              out[p.k] = transpose(cur, semi);
+            }
+          }
+        }
+      }
+      out.seed = 1 + Math.floor(r() * 99);
+      if (amount > 0) {
+        out.vary = +(amount * 0.5).toFixed(2);
+      }
+      return out;
+    };
     if (typeof module !== 'undefined' && module.exports) {
       module.exports = S;
     }
     if (typeof window !== 'undefined') {
       return window.sfx = S;
+    }
+    function fn$(){
+      var ref$, results$ = [];
+      for (k in ref$ = spec) {
+        v = ref$[k];
+        if (Array.isArray(v)) {
+          results$.push({
+            k: k,
+            type: 'range',
+            min: v[0],
+            max: v[1],
+            step: v[2],
+            def: v[3]
+          });
+        } else if (v.options) {
+          results$.push({
+            k: k,
+            type: 'select',
+            options: v.options,
+            def: v.def
+          });
+        } else if ('note' in v) {
+          results$.push({
+            k: k,
+            type: 'note',
+            def: v.note,
+            hint: v.hint
+          });
+        } else if ('text' in v) {
+          results$.push({
+            k: k,
+            type: 'text',
+            def: v.text
+          });
+        } else {
+          results$.push({
+            k: k,
+            type: 'json',
+            def: v.json
+          });
+        }
+      }
+      return results$;
     }
   })();
   function import$(obj, src){

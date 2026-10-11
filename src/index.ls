@@ -169,9 +169,18 @@ do ->
       return
     try v.src.stop now + fade + 0.01 catch e
 
+  # 變化: 由 h1, h2 ( 0~1 ) 算出音高 ( vary 1 約 ±1 個半音 ) 與音量 ( 最多小 30% ) 的微調
+  jitter = (vary, h1, h2) -> {rate: Math.pow(2, (h1 * 2 - 1) * vary / 12), gain: 1 - vary * 0.3 * h2}
+
   # 指令式播放: 回傳 handle {stop(fade), fade(to, dur)}
+  #  - name 可以是陣列: 每次隨機挑一個 ( 例如幾種腳步聲輪流 )
+  #  - vary ( 0~1 ): 每次播放的音高與音量略有不同 ( 隨機, 不可重現; 時間軸上的是可重現的 )
   S.play = (name, opt = {}) ->
     S.resume!
+    if Array.isArray(name) => name = name[Math.floor(Math.random! * name.length)]
+    if opt.vary
+      j = jitter opt.vary, Math.random!, Math.random!
+      opt = {} <<< opt <<< {rate: (opt.rate or 1) * j.rate, gain: (if opt.gain? => opt.gain else 1) * j.gain}
     v = voice name, opt
     if !v => return null
     v.manual = true
@@ -200,8 +209,20 @@ do ->
   # ---------------------------------------------------------------- 時間軸
   # item: {t, sound, gain, rate, loop, until ( loop 到何時 ), duration, fadeIn, fadeOut, offset, bus, align: 'peak' | 'start'}
   #  - sfx bus 預設 align: 'peak', 讓起音點落在 t 上
+  #  - sound 可以是陣列: 依項目的位置與時間挑一個 ( 可重現, 拖曳、重播、離線混音都一樣 )
+  #  - vary ( 0~1 ): 每個項目的音高與音量略有不同 ( 同樣可重現 )
   S.timeline = (items = []) ->
-    S.items = items.map (it) -> {} <<< it
+    S.items = items.map (it, k) ->
+      it = {} <<< it
+      if Array.isArray(it.sound) or it.vary
+        h = rng(((k + 1) * 2654435761 .^. Math.round((it.t or 0) * 1000) * 40503) .>>>. 0)
+        h!
+        if Array.isArray(it.sound) => it.sound = it.sound[Math.floor(h! * it.sound.length)]
+        if it.vary
+          j = jitter it.vary, h!, h!
+          it.rate = (it.rate or 1) * j.rate
+          it.gain = (if it.gain? => it.gain else 1) * j.gain
+      it
     if S.playing => S.transport {playing: true, t: S.t or 0, force: true}
     S
 
@@ -555,14 +576,16 @@ do ->
       d = biquad-tv noise(n, r), \bp, ((u) -> 300 + 3000 * u * u), 0.9
       for i from 0 til n => u = i / n; L[i] = R[i] = d[i] * u * u
   # 簡單旋律: notes [[t, note, dur?, vel?]], instrument 為任一有 note 參數的合成聲 ( 預設 pluck 撥弦 )
+  #  - release: 每個音在 dur 之後保留的尾音 ( 秒, 預設 0.8 ); 要聽得出音長時設小一點 ( 例如 0.1 )
   synth.melody = (o = {}) ->
     seq = o.notes or []
+    rel = if o.release? => o.release else 0.8
     dur = o.dur or (Math.max(...seq.map((x) -> x.0 + (x.2 or 1.5))) + 1)
     inst = o.instrument or \pluck
     if !synth[inst] => inst = \pluck
     voices = seq.map (x, k) ->
       opt = if inst == \pluck => {bright: o.bright, slide: o.slide} else {}
-      [x, synth[inst]({note: x.1, dur: (x.2 or 1.5) + 0.8, seed: 31 + k} <<< opt)]
+      [x, synth[inst]({note: x.1, dur: (x.2 or 1.5) + rel, seed: 31 + k} <<< opt)]
     make dur, (L, R, n) ->
       for [[t, note, d, vel], b] in voices => place L, R, b, t, (vel or 0.8)
 
@@ -1381,12 +1404,198 @@ do ->
         d[i] *= Math.min(1, t / Math.max(0.001, att), (dur - t) / Math.max(0.001, rel))
       pan L, R, d, o.pan
 
-  # ---------------------------------------------------------------- 每種合成聲都可以加殘響: reverb ( 0~1, 濕聲比例 ), room ( 0~1, 空間大小 )
+  # ---------------------------------------------------------------- 樂譜
+  # 文字樂譜: "C4/4 C4 G4 G4 | A4 A4 G4/2 | F4/4 F4 E4 E4 | D4 D4 C4/2"
+  #  - 音名 + 八度 ( C4、F#5、Bb3 ), /n 為音長 ( 1 全音符, 2 二分, 4 四分, 8, 16, 32, 64 ), 後面加 . 為附點 ( .. 為雙附點 )
+  #  - - 或 r 為休止符; C4+E4+G4 為和弦; | 為小節線 ( 只是方便閱讀 )
+  #  - 音長沒寫就沿用前一個 ( 第一個預設四分音符 )
+  # S.score.parse(text) -> [{notes: [音名], beats ( 以四分音符為一拍 )}], 休止符的 notes 為空陣列
+  # S.score(text, {bpm}) -> melody 用的 notes [[t, note, dur], ...] ( 和弦拆成同時的多個音 )
+  parse-score = (text = '') ->
+    beats = 1
+    out = []
+    for tok in text.split(/\s+/) when tok and tok != '|'
+      m = /^([^\/]+?)(?:\/(\d+))?(\.*)$/.exec tok
+      if !m => throw new Error("看不懂的樂譜: #tok")
+      if m.2 => beats = 4 / +m.2
+      b = beats * (if m.3.length == 1 => 1.5 else if m.3.length >= 2 => 1.75 else 1)
+      notes = if m.1 in <[- r R]> => [] else m.1.split(\+)
+      for nm in notes when !/^[A-G](#|b)?-?\d$/.test(nm) => throw new Error("看不懂的音名: #nm")
+      out.push {notes, beats: b}
+    out
+  S.score = (text, o = {}) ->
+    spb = 60 / (o.bpm or 100)
+    t = 0
+    out = []
+    for x in parse-score(text)
+      for nm in x.notes => out.push [+(t * spb).toFixed(4), nm, +(x.beats * spb * 0.92).toFixed(4)]
+      t += x.beats
+    out
+  S.score.parse = parse-score
+  S.score.duration = (text, o = {}) -> parse-score(text).reduce(((a, x) -> a + x.beats), 0) * 60 / (o.bpm or 100)
+
+  # 照樂譜演奏: instrument 為任一合成聲名稱或 AudioBuffer
+  #  - 有 note 參數的合成聲 ( pluck、marimba、guitar ... ) 以音高合成每個音
+  #  - 其他聲音 ( 例如 pop、kick, 或載入的 AudioBuffer ) 以 base ( 預設 C4 ) 為準變調演奏
+  #  - score: 文字樂譜 ( 預設小星星 ), bpm ( 100 ), release: 每個音之後保留的尾音 ( 秒, 預設 0.1 )
+  TWINKLE = 'C4/4 C4 G4 G4 | A4 A4 G4/2 | F4/4 F4 E4 E4 | D4 D4 C4/2'
+  synth.score = (o = {}) ->
+    text = o.score or TWINKLE
+    notes = S.score text, {bpm: o.bpm}
+    total = S.score.duration text, {bpm: o.bpm}
+    inst = o.instrument or \pluck
+    rel = if o.release? => o.release else 0.1
+    pitched = typeof(inst) == \string and S.params[inst] and S.params[inst].some((p) -> p.k == \note)
+    if pitched => return synth.melody {notes, instrument: inst, release: rel, dur: total + rel + 1}
+    src = if is-buffer(inst) => inst else (if synth[inst] => synth[inst]({}) else synth.pluck({}))
+    base = S.freq(o.base or \C4)
+    cache = {}
+    make total + src.duration * 2 + 0.1, (L, R, n) ->
+      for [t, nm] in notes
+        ratio = S.freq(nm) / base
+        cache[nm] ?= resample src, ratio, 1
+        place L, R, cache[nm], t, 0.8
+
+  # ---------------------------------------------------------------- 每種合成聲都可以加的共用參數
+  #  - vary ( 0~1 ): 變化. 換一組雜訊, 音高與長度微調 ( 1 約 ±1 個半音 ), 音量略小; 同樣的 seed 永遠是同樣的變化
+  #  - reverb ( 0~1, 濕聲比例 ), room ( 0~1, 空間大小 ): 殘響
+  # 重新取樣: 速率 rate ( 音高與長度一起變 ), 音量 gain
+  resample = (buf, rate, gain) ->
+    src = [buf.getChannelData(0), buf.getChannelData(1)]
+    m = buf.length
+    n = Math.max 1, Math.round(m / rate)
+    out = new AudioBuffer {length: n, sampleRate: SR, numberOfChannels: 2}
+    for ch from 0 til 2
+      d = new Float32Array n; x = src[ch]
+      for i from 0 til n
+        p = i * rate; j = Math.floor p; f = p - j
+        d[i] = ((x[j] or 0) * (1 - f) + (x[j + 1] or 0) * f) * gain
+      out.copyToChannel d, ch
+    out
   wrap = (fn) -> (o = {}) ->
-    b = fn o
+    if o.vary
+      v = rng((o.seed or 1) * 7919 + 13)
+      j = jitter o.vary, v!, v!
+      b = fn({} <<< o <<< {seed: (o.seed or 1) * 1009 + 1 + Math.floor(v! * 1e5)})
+      b = resample b, j.rate, j.gain
+    else b = fn o
     mix = if o.reverb? => o.reverb else (fn.reverb or 0)
     if mix > 0 => reverb b, mix, (if o.room? => o.room else 0.5) else b
   for k of synth => synth[k] = wrap synth[k]
+
+  # 一次產生 count 個變化 ( seed 1 ~ count, vary 預設 0.5 ), 例如幾種略有不同的腳步聲; 回傳 AudioBuffer 陣列
+  #   [a, b, c] = S.variants('steps', {n: 1}, 3)
+  #   S.load({step1: a, step2: b, step3: c})
+  #   S.timeline([{t: 1, sound: ['step1', 'step2', 'step3']}, ...])
+  S.variants = (name, opt = {}, count = 4) ->
+    [synth[name]({vary: 0.5} <<< opt <<< {seed: (opt.seed or 0) + k + 1}) for k from 0 til count]
+
+  # ---------------------------------------------------------------- 參數表 ( demo 頁與 S.mutate 用 )
+  # [最小, 最大, 步進, 預設] 為數值; {note} 為音名或 Hz; {options} 為選項; {text} 為文字; {json} 為陣列等
+  PARAMS =
+    click: {freq: [500, 5000, 10, 2000], seed: [1, 99, 1, 7], pan: [-1, 1, 0.05, 0]}
+    tick: {note: {note: null, hint: "1800 Hz"}, pan: [-1, 1, 0.05, 0]}
+    pop: {from: [100, 2000, 10, 380], to: [100, 3000, 10, 900], pan: [-1, 1, 0.05, 0]}
+    toggle: {pan: [-1, 1, 0.05, 0]}
+    type: {seed: [1, 99, 1, 11]}
+    thump: {seed: [1, 99, 1, 5], pan: [-1, 1, 0.05, 0]}
+    snap: {seed: [1, 99, 1, 41], pan: [-1, 1, 0.05, 0]}
+    chime: {note: {note: "E6"}, dur: [0.3, 4, 0.1, 1.4], pan: [-1, 1, 0.05, 0], reverb: [0, 1, 0.05, 0], room: [0, 1, 0.05, 0.5]}
+    success: {pan: [-1, 1, 0.05, 0], reverb: [0, 1, 0.05, 0], room: [0, 1, 0.05, 0.5]}
+    notify: {pan: [-1, 1, 0.05, 0], reverb: [0, 1, 0.05, 0], room: [0, 1, 0.05, 0.5]}
+    error: {from: {note: "B3"}, to: {note: "F3"}, pan: [-1, 1, 0.05, 0]}
+    correct: {style: {options: ["pingpong","arp"], def: "pingpong"}, notes: {json: null}, gap: [0.03, 0.4, 0.01, 0.2], pan: [-1, 1, 0.05, 0], reverb: [0, 1, 0.05, 0.15], room: [0, 1, 0.05, 0.5]}
+    wrong: {style: {options: ["buzzer","trombone"], def: "buzzer"}, pitch: [60, 400, 1, 140], pan: [-1, 1, 0.05, 0]}
+    reveal: {notes: {json: ["C6","E6","G6","C7","E7"]}, gap: [0.02, 0.2, 0.01, 0.06], seed: [1, 99, 1, 53], pan: [-1, 1, 0.05, 0], reverb: [0, 1, 0.05, 0.35], room: [0, 1, 0.05, 0.5]}
+    whoosh: {dur: [0.1, 2, 0.05, 0.7], from: [50, 5000, 10, 400], peak: [50, 6000, 10, 2600], to: [50, 5000, 10, 600], at: [0.05, 0.95, 0.01, 0.45], q: [0.3, 6, 0.1, 1.2], seed: [1, 99, 1, 3]}
+    swell: {dur: [0.5, 6, 0.1, 2], seed: [1, 99, 1, 23]}
+    slide: {dur: [0.1, 1, 0.05, 0.3], from: [100, 6000, 10, 900], to: [100, 6000, 10, 2600], q: [0.3, 4, 0.1, 0.9], dir: [-1, 1, 0.1, 1], seed: [1, 99, 1, 37]}
+    rise: {from: {note: null, hint: "300 Hz"}, to: {note: null, hint: "900 Hz"}, dur: [0.1, 3, 0.05, 0.6], pan: [-1, 1, 0.05, 0]}
+    fall: {from: {note: null, hint: "900 Hz"}, to: {note: null, hint: "250 Hz"}, dur: [0.1, 3, 0.05, 0.6], pan: [-1, 1, 0.05, 0]}
+    count: {n: [2, 40, 1, 12], dur: [0.2, 4, 0.1, 1.2], ease: {options: ["out","in","linear"], def: "out"}, climb: [0, 24, 1, 7], note: {note: "C6"}, pan: [-1, 1, 0.05, 0]}
+    draw: {dur: [0.2, 4, 0.1, 1], rough: [0, 1, 0.05, 0.5], pitch: [500, 8000, 50, 2500], seed: [1, 99, 1, 43], pan: [-1, 1, 0.05, 0]}
+    glitch: {dur: [0.1, 2, 0.05, 0.5], seed: [1, 99, 1, 47]}
+    sweep: {wave: {options: ["sine","triangle","square","saw","noise"], def: "sine"}, curve: {options: ["exp","lin"], def: "exp"}, from: {note: null, hint: "200 Hz"}, to: {note: null, hint: "2000 Hz"}, dur: [0.1, 4, 0.05, 1], q: [0.3, 10, 0.1, 2], attack: [0, 1, 0.01, 0.01], release: [0, 2, 0.01, 0.1], pan: [-1, 1, 0.05, 0]}
+    tension: {note: {note: "A2"}, dur: [1, 12, 0.5, 6]}
+    heartbeat: {bpm: [40, 180, 1, 70], dur: [1, 10, 0.5, 4], pan: [-1, 1, 0.05, 0]}
+    clock: {bpm: [30, 240, 1, 60], dur: [1, 10, 0.5, 4], seed: [1, 99, 1, 59], pan: [-1, 1, 0.05, 0]}
+    fingersnap: {tone: [2000, 5000, 10, 3200], seed: [1, 99, 1, 137], pan: [-1, 1, 0.05, 0]}
+    huh: {pitch: [80, 400, 1, 200], rise: [1, 3, 0.05, 1.9], dur: [0.2, 1, 0.01, 0.45], size: [0.8, 1.3, 0.01, 1], seed: [1, 99, 1, 151]}
+    yay: {pitch: [100, 500, 1, 300], dur: [0.2, 1.2, 0.01, 0.5], size: [0.8, 1.3, 0.01, 1], seed: [1, 99, 1, 157]}
+    paper: {dur: [0.4, 2.5, 0.05, 1.2], crisp: [0, 3, 0.1, 1], flutter: [0, 1, 0.05, 0.6], seed: [1, 99, 1, 61]}
+    water: {n: [1, 300, 1, 1], size: [0.5, 10, 0.1, 3], rise: [0, 1, 0.05, 0.05], dur: [0.2, 10, 0.1, 0.4], seed: [1, 99, 1, 67]}
+    fire: {dur: [1, 10, 0.5, 6], density: [0, 4, 0.1, 1], seed: [1, 99, 1, 71]}
+    steps: {surface: {options: ["wood","concrete","gravel","snow","grass"], def: "wood"}, gait: {options: ["walk","run"], def: "walk"}, n: [1, 12, 1, 4], pace: [0.2, 1.2, 0.05, 0.5], seed: [1, 99, 1, 73]}
+    bell: {note: {note: "C5"}, dur: [1, 10, 0.5, 5], pan: [-1, 1, 0.05, 0], reverb: [0, 1, 0.05, 0.2], room: [0, 1, 0.05, 0.5]}
+    thunder: {dur: [2, 12, 0.5, 6], dist: [0, 1, 0.05, 0.5], seed: [1, 99, 1, 79]}
+    wind: {dur: [1, 10, 0.5, 6], cutoff: [200, 3000, 10, 900], seed: [1, 99, 1, 17]}
+    rain: {dur: [1, 10, 0.5, 6], density: [0.002, 0.2, 0.002, 0.02], seed: [1, 99, 1, 19]}
+    buzz: {dur: [0.2, 4, 0.1, 1.5], freq: [80, 600, 1, 220], pan: [-1, 1, 0.05, 0]}
+    pluck: {note: {note: "A3"}, dur: [0.3, 5, 0.1, 2.5], bright: [0, 1, 0.05, 0.6], slide: [0, 3, 0.1, 0.6], seed: [1, 99, 1, 13], pan: [-1, 1, 0.05, 0], reverb: [0, 1, 0.05, 0], room: [0, 1, 0.05, 0.5]}
+    guitar: {note: {note: "E3"}, chord: {options: ["","C","D","Dm","E","Em","F","G","A","Am"], def: ""}, notes: {json: null}, dir: {options: ["down","up"], def: "down"}, strum: [0, 0.1, 0.005, 0.03], dur: [0.5, 6, 0.1, 3], bright: [0, 1, 0.05, 0.5], pos: [0.05, 0.5, 0.01, 0.2], mute: [0, 1, 0.05, 0], seed: [1, 99, 1, 89], pan: [-1, 1, 0.05, 0], reverb: [0, 1, 0.05, 0], room: [0, 1, 0.05, 0.5]}
+    marimba: {note: {note: "C4"}, dur: [0.3, 4, 0.1, 1.5], hard: [0, 1, 0.05, 0.5], pan: [-1, 1, 0.05, 0], reverb: [0, 1, 0.05, 0], room: [0, 1, 0.05, 0.5]}
+    xylophone: {note: {note: "C5"}, dur: [0.2, 3, 0.1, 0.8], hard: [0, 1, 0.05, 0.5], pan: [-1, 1, 0.05, 0], reverb: [0, 1, 0.05, 0], room: [0, 1, 0.05, 0.5]}
+    vibraphone: {note: {note: "F4"}, dur: [0.5, 6, 0.1, 3], trem: [0, 1, 0.05, 0.35], hard: [0, 1, 0.05, 0.5], pan: [-1, 1, 0.05, 0], reverb: [0, 1, 0.05, 0], room: [0, 1, 0.05, 0.5]}
+    glockenspiel: {note: {note: "C6"}, dur: [0.3, 4, 0.1, 2], hard: [0, 1, 0.05, 0.5], pan: [-1, 1, 0.05, 0], reverb: [0, 1, 0.05, 0], room: [0, 1, 0.05, 0.5]}
+    score: {score: {text: "C4/4 C4 G4 G4 | A4 A4 G4/2 | F4/4 F4 E4 E4 | D4 D4 C4/2"}, instrument: {options: ["pluck", "marimba", "xylophone", "vibraphone", "glockenspiel", "guitar", "chime", "bell", "pop", "tick", "kick", "tom", "water"], def: "pluck"}, bpm: [40, 240, 1, 100], base: {note: "C4"}, release: [0.02, 2, 0.01, 0.1]}
+    melody: {notes: {json: [[0,"A3"],[0.4,"C4"],[0.8,"E4"],[1.2,"A4",2]]}, instrument: {options: ["pluck","marimba","xylophone","vibraphone","glockenspiel","guitar","chime","bell"], def: "pluck"}, release: [0.02, 2, 0.01, 0.8], bright: [0, 1, 0.05, 0.6], slide: [0, 3, 0.1, 0.6], reverb: [0, 1, 0.05, 0], room: [0, 1, 0.05, 0.5]}
+    drone: {notes: {json: ["A1","E2","A2"]}, dur: [1, 12, 0.5, 8], attack: [0.1, 4, 0.1, 1.5], release: [0.1, 4, 0.1, 2]}
+    kick: {tune: [30, 120, 1, 50], decay: [0.05, 1, 0.01, 0.3], punch: [0, 1, 0.05, 0.5], pan: [-1, 1, 0.05, 0]}
+    snare: {tune: [100, 400, 1, 180], decay: [0.05, 0.5, 0.01, 0.15], snappy: [0, 1, 0.05, 0.6], seed: [1, 99, 1, 101], pan: [-1, 1, 0.05, 0]}
+    hihat: {open: [0, 1, 0.05, 0], tune: [0.5, 2, 0.05, 1], seed: [1, 99, 1, 103], pan: [-1, 1, 0.05, 0]}
+    tom: {note: {note: "A2"}, decay: [0.1, 1, 0.01, 0.35], seed: [1, 99, 1, 107], pan: [-1, 1, 0.05, 0]}
+    clap: {decay: [0.03, 0.5, 0.01, 0.12], seed: [1, 99, 1, 109]}
+    crash: {decay: [0.3, 3, 0.05, 1], tune: [0.5, 2, 0.05, 1], seed: [1, 99, 1, 113]}
+    ride: {decay: [0.3, 3, 0.05, 1], bell: [0, 1, 0.05, 0], tune: [0.5, 2, 0.05, 1], seed: [1, 99, 1, 127]}
+    beat: {pattern: {json: {"kick":"x.......x.x.....","snare":"....x.......x...","hihat":"x.x.x.x.x.x.x.x."}}, bpm: [50, 200, 1, 100], bars: [1, 8, 1, 1], swing: [0, 1, 0.05, 0], reverb: [0, 1, 0.05, 0], room: [0, 1, 0.05, 0.5]}
+  # 展開成 S.params[name] = [{k, type: range | note | select | json, min, max, step, def, options, hint}]
+  S.params = {}
+  for name, spec of PARAMS
+    S.params[name] = for k, v of spec
+      if Array.isArray(v) => {k, type: \range, min: v.0, max: v.1, step: v.2, def: v.3}
+      else if v.options => {k, type: \select, options: v.options, def: v.def}
+      else if \note of v => {k, type: \note, def: v.note, hint: v.hint}
+      else if \text of v => {k, type: \text, def: v.text}
+      else {k, type: \json, def: v.json}
+
+  # 音名移調 ( 半音 ); Hz 則乘上對應的倍數
+  SEMI = {C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11}
+  NAMES = <[C C# D D# E F F# G G# A A# B]>
+  transpose = (note, semi) ->
+    if typeof(note) == \number => return Math.round(note * Math.pow(2, semi / 12))
+    m = /^([A-G])(#|b)?(-?\d)$/.exec note
+    if !m => return note
+    midi = 12 * (+m.3 + 1) + SEMI[m.1] + (if m.2 == '#' => 1 else if m.2 == \b => -1 else 0) + semi
+    NAMES[((midi % 12) + 12) % 12] + (Math.floor(midi / 12) - 1)
+
+  # 以目前的參數 ( 沒給的用預設 ) 為中心, 產生一組變化的參數 ( 不改原物件 ):
+  #  - 數值: 常態分布, σ = amount × 範圍 × 0.15, 夾在範圍內並對齊步進
+  #  - 選項 ( 例如 style ): 以 amount × 2 的機率 ( 0.5 以上即每次 ) 換成隨機的一個
+  #  - 音名: 移 round( 常態 × amount × 2 ) 個半音
+  #  - 換一個 seed, 並加上 vary ( amount × 0.5 ), 讓沒有可調參數的聲音也有變化
+  #  - pan / reverb / room 不動
+  # cfg: {amount ( 0~1, 預設 0.5 ), seed ( 給了就可重現, 否則隨機 )}
+  #   S.synth.correct(S.mutate('correct'))
+  S.mutate = (name, opt = {}, cfg = {}) ->
+    amount = if cfg.amount? => cfg.amount else 0.5
+    r = if cfg.seed? => rng(cfg.seed) else Math.random
+    out = {} <<< opt
+    for p in (S.params[name] or []) when p.k not in <[seed pan reverb room vary]>
+      cur = if opt[p.k]? => opt[p.k] else p.def
+      switch p.type
+      | \range =>
+        v = cur + gauss(r) * amount * (p.max - p.min) * 0.15
+        v = +(Math.round(Math.max(p.min, Math.min(p.max, v)) / p.step) * p.step).toFixed(4)
+        if v == p.def => delete out[p.k] else out[p.k] = v
+      | \select =>
+        if r! < amount * 2 => out[p.k] = p.options[Math.floor(r! * p.options.length)]
+        if out[p.k] == p.def => delete out[p.k]
+      | \note =>
+        semi = Math.round(gauss(r) * amount * 2)
+        if cur? and semi => out[p.k] = transpose cur, semi
+    out.seed = 1 + Math.floor(r! * 99)
+    if amount > 0 => out.vary = +(amount * 0.5).toFixed(2)
+    out
 
   if typeof(module) != \undefined and module.exports => module.exports = S
   if typeof(window) != \undefined => window.sfx = S
