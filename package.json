@@ -1,0 +1,36 @@
+{
+  "author": "zbryikt",
+  "name": "@plotdb/sfx",
+  "version": "0.0.1",
+  "description": "audio runtime for deterministic animation: a timeline synced to animation time, imperative playback, and procedural synthesized sounds",
+  "license": "MIT",
+  "main": "dist/index.min.js",
+  "browser": "dist/index.min.js",
+  "files": [
+    "dist/**/*"
+  ],
+  "homepage": "https://github.com/plotdb/sfx",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/plotdb/sfx.git"
+  },
+  "scripts": {
+    "build": "./build",
+    "start": "npx server -r web -o true"
+  },
+  "keywords": [
+    "audio",
+    "sound",
+    "sfx",
+    "webaudio",
+    "animation",
+    "lotion"
+  ],
+  "devDependencies": {
+    "@plotdb/guides": "github:plotdb/guides",
+    "@zbryikt/template": "^2.5.0",
+    "fedep": "^1.9.0",
+    "livescript": "^1.6.0",
+    "uglify-js": "^3.19.3"
+  }
+}
