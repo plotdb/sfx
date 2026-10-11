@@ -7,7 +7,8 @@
  - 程序化合成：在瀏覽器裡算出 UI 音效、撥弦、環境聲，免費、可重現 ( 同樣的參數永遠是同樣的聲音 )。
  - 離線混音：把時間軸混成一段音訊 ( 輸出影片配音用 )。
 
-試聽：`npm run build` 後 `npm start`，開 `web/index.html`，每種合成聲都可以調參數試聽。
+試玩：`npm install`、`npx fedep`、`npm run build` 後 `npm start` ( 即 `npx server -r web -o true` )。
+頁面原始碼在 `web/src/pug`，建置到 `web/static`：每種合成聲都可以調參數試聽，也可以編輯一段時間軸播放、拖曳、倍速並混成 wav。
 
 
 ## 安裝與載入

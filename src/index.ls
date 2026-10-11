@@ -462,7 +462,7 @@ do ->
     pan L, R, d, o.pan
   # 撥弦 ( Karplus-Strong ), 起音時往上滑 ( 類古箏 )
   synth.pluck = (o = {}) ->
-    f = S.freq(o.note or 'A3'); dur = o.dur or 2.5; bright = if o.bright? => o.bright else 0.6; slide = o.slide or 0.6
+    f = S.freq(o.note or 'A3'); dur = o.dur or 2.5; bright = if o.bright? => o.bright else 0.6; slide = if o.slide? => o.slide else 0.6
     make dur, (L, R, n) ->
       r = rng(o.seed or 13)
       period = SR / f

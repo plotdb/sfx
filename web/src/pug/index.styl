@@ -1,0 +1,341 @@
+:root
+  --bg: #f6f3ec
+  --fg: #1d1b19
+  --muted: #6b655d
+  --line: #ddd6c9
+  --card: #fffdf9
+  --field: #f1ece2
+  --accent: #c4502f
+  --accent-fg: #fff
+  --wave: #8a7f70
+  --wave-hot: #c4502f
+@media (prefers-color-scheme: dark)
+  :root
+    --bg: #151413
+    --fg: #ece7de
+    --muted: #9a9389
+    --line: #34312d
+    --card: #1e1c1a
+    --field: #262321
+    --accent: #e0714d
+    --accent-fg: #1a1210
+    --wave: #7d756b
+    --wave-hot: #e0714d
+
+html, body
+  background: var(--bg)
+  color: var(--fg)
+body
+  font: 15px/1.6 system-ui, -apple-system, "PingFang TC", "Noto Sans TC", sans-serif
+a
+  color: var(--accent)
+code
+  color: inherit
+  font: 12px/1.5 ui-monospace, Menlo, monospace
+
+.page
+  max-width: 1080px
+  margin: 0 auto
+  padding: 40px 16px 64px
+
+.hero
+  display: grid
+  grid-template-columns: 1fr auto
+  gap: 16px 32px
+  align-items: start
+  padding-bottom: 24px
+  border-bottom: 1px solid var(--line)
+  h1
+    margin: 0 0 4px
+    font-size: 30px
+    font-weight: 700
+    letter-spacing: -0.01em
+  .lead
+    margin: 0
+    color: var(--muted)
+    max-width: 36em
+  .links
+    display: flex
+    gap: 16px
+    padding-top: 10px
+  .mixer
+    grid-column: 1 / -1
+    display: flex
+    flex-wrap: wrap
+    gap: 8px 24px
+  .bus
+    display: flex
+    align-items: center
+    gap: 8px
+    label
+      margin: 0
+      font-size: 13px
+      color: var(--muted)
+      min-width: 3.5em
+    input
+      width: 110px
+
+input[type=range]
+  accent-color: var(--accent)
+.num
+  font: 12px ui-monospace, Menlo, monospace
+  color: var(--muted)
+  min-width: 3em
+
+section
+  padding-top: 40px
+.sec-head
+  margin-bottom: 16px
+  h2
+    margin: 0 0 4px
+    font-size: 22px
+    font-weight: 700
+  p
+    margin: 0
+    color: var(--muted)
+    max-width: 48em
+
+.group
+  margin-top: 24px
+  h3
+    font-size: 13px
+    font-weight: 600
+    color: var(--muted)
+    text-transform: uppercase
+    letter-spacing: 0.08em
+    margin: 0 0 10px
+
+.cards
+  display: grid
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr))
+  gap: 12px
+
+.card
+  background: var(--card)
+  border: 1px solid var(--line)
+  border-radius: 10px
+  padding: 14px
+  display: flex
+  flex-direction: column
+  gap: 10px
+  min-width: 0
+
+.card-head
+  display: flex
+  align-items: baseline
+  gap: 8px
+  .name
+    font: 600 15px ui-monospace, Menlo, monospace
+  .desc
+    color: var(--muted)
+    font-size: 13px
+    flex: 1
+  .len
+    font: 12px ui-monospace, Menlo, monospace
+    color: var(--muted)
+
+canvas.wave
+  width: 100%
+  height: 56px
+  display: block
+  border-radius: 6px
+  background: var(--field)
+  cursor: pointer
+
+.params
+  display: flex
+  flex-direction: column
+  gap: 4px
+.param
+  display: grid
+  grid-template-columns: 4.5em 1fr 3.5em
+  align-items: center
+  gap: 8px
+  label
+    margin: 0
+    font: 12px ui-monospace, Menlo, monospace
+    color: var(--muted)
+  input[type=text]
+    grid-column: 2 / 4
+    width: 100%
+    min-width: 0
+    border: 1px solid var(--line)
+    background: var(--field)
+    color: var(--fg)
+    border-radius: 4px
+    padding: 2px 6px
+    font: 12px ui-monospace, Menlo, monospace
+  input[type=range]
+    width: 100%
+    min-width: 0
+  input.bad
+    border-color: var(--accent)
+
+.presets, .rates
+  display: flex
+  flex-wrap: wrap
+  gap: 6px
+.chip
+  font-size: 12px
+  border: 1px solid var(--line)
+  border-radius: 99px
+  padding: 1px 10px
+  cursor: pointer
+  color: var(--muted)
+  user-select: none
+  &:hover
+    color: var(--fg)
+    border-color: var(--muted)
+  &.on
+    color: var(--accent-fg)
+    background: var(--accent)
+    border-color: var(--accent)
+
+button
+  border: 0
+  border-radius: 6px
+  font: inherit
+  font-size: 13px
+  cursor: pointer
+  padding: 5px 14px
+  &.play
+    background: var(--accent)
+    color: var(--accent-fg)
+    font-weight: 600
+  &.ghost, &.copy
+    background: transparent
+    color: var(--fg)
+    border: 1px solid var(--line)
+    &:hover
+      border-color: var(--muted)
+  &.copy
+    padding: 3px 10px
+    font-size: 12px
+  &:focus
+    outline: 2px solid var(--accent)
+    outline-offset: 1px
+
+.card-foot
+  display: flex
+  align-items: center
+  gap: 8px
+  margin-top: auto
+  code
+    flex: 1
+    min-width: 0
+    overflow: hidden
+    text-overflow: ellipsis
+    white-space: nowrap
+    color: var(--muted)
+
+.tl
+  background: var(--card)
+  border: 1px solid var(--line)
+  border-radius: 10px
+  padding: 16px
+  display: flex
+  flex-direction: column
+  gap: 12px
+
+.stage
+  display: flex
+  flex-wrap: wrap
+  justify-content: space-around
+  gap: 12px
+  padding: 28px 8px 20px
+  border-radius: 8px
+  background: var(--field)
+.hit
+  display: flex
+  flex-direction: column
+  align-items: center
+  gap: 10px
+  width: 64px
+  .dot
+    width: 28px
+    height: 28px
+    border-radius: 50%
+    background: var(--wave)
+    opacity: 0.35
+    will-change: transform
+  .label
+    font: 11px ui-monospace, Menlo, monospace
+    color: var(--muted)
+    white-space: nowrap
+  .dot.music
+    border-radius: 6px
+
+canvas.track
+  width: 100%
+  display: block
+  cursor: pointer
+  touch-action: none
+
+.controls
+  display: flex
+  flex-wrap: wrap
+  align-items: center
+  gap: 10px
+  .play
+    min-width: 6em
+  .time
+    font: 13px ui-monospace, Menlo, monospace
+    min-width: 7.5em
+  .grow
+    flex: 1
+  .dl
+    font-size: 13px
+    display: none
+    &.on
+      display: inline
+
+audio.out
+  width: 100%
+  height: 36px
+  display: none
+  &.on
+    display: block
+
+.editor
+  display: flex
+  flex-direction: column
+  gap: 6px
+  textarea
+    width: 100%
+    min-height: 260px
+    border: 1px solid var(--line)
+    background: var(--field)
+    color: var(--fg)
+    border-radius: 6px
+    padding: 8px 10px
+    font: 12px/1.5 ui-monospace, Menlo, monospace
+    resize: vertical
+.editor-head
+  display: flex
+  align-items: center
+  gap: 12px
+  span
+    flex: 1
+    font-size: 13px
+    color: var(--muted)
+.err
+  color: var(--accent)
+  font-size: 12px
+  min-height: 1em
+
+footer
+  margin-top: 48px
+  padding-top: 16px
+  border-top: 1px solid var(--line)
+  color: var(--muted)
+  font-size: 13px
+  display: flex
+  gap: 6px
+
+@media (max-width: 640px)
+  .hero
+    grid-template-columns: 1fr
+    .links
+      padding-top: 0
+  .cards
+    grid-template-columns: 1fr

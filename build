@@ -7,6 +7,8 @@ mkdir -p dist
 echo "build src/index.ls -> dist/index.js ..."
 $bin/lsc -cp --no-header src/index.ls > dist/index.js
 $bin/uglifyjs dist/index.js -m -c > dist/index.min.js
-echo "copy dist/ to web/assets/ ( 試聽頁用 ) ..."
-mkdir -p web/assets
-cp dist/index.js web/assets/sfx.js
+echo "deploy dist/ into local web ( demo 用 ) ..."
+rm -rf web/static/assets/lib/@plotdb/sfx/dev
+mkdir -p web/static/assets/lib/@plotdb/sfx/dev
+cp -R dist/* web/static/assets/lib/@plotdb/sfx/dev/
+echo "done."

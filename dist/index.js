@@ -890,7 +890,7 @@
       dur = o.dur || 2.5;
       bright = o.bright != null
         ? o.bright
-        : (0.6, slide = o.slide || 0.6);
+        : (0.6, slide = o.slide != null ? o.slide : 0.6);
       return make(dur, function(L, R, n){
         var r, period, size, buf, i$, to$, k, j$, i, d, line, decay, p, j, j0, fr, a, b;
         r = rng(o.seed || 13);

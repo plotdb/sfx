@@ -27,10 +27,26 @@
     "lotion"
   ],
   "devDependencies": {
+    "@loadingio/bootstrap.ext": "^0.0.12",
+    "@loadingio/ldquery": "^3.0.7",
     "@plotdb/guides": "github:plotdb/guides",
     "@zbryikt/template": "^2.5.0",
+    "bootstrap": "^4.6.1",
     "fedep": "^1.9.0",
+    "ldview": "^1.7.2",
     "livescript": "^1.6.0",
     "uglify-js": "^3.19.3"
+  },
+  "frontendDependencies": {
+    "root": "web/static/assets/lib",
+    "modules": [
+      "@loadingio/bootstrap.ext",
+      "@loadingio/ldquery",
+      {
+        "name": "bootstrap",
+        "dir": "dist"
+      },
+      "ldview"
+    ]
   }
 }
