@@ -6,3 +6,4 @@ web/static/assets/lib
 .DS_Store
 .fedep
 /.deploy
+/_public
