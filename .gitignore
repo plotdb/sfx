@@ -4,3 +4,4 @@ web/.view
 web/static/assets/lib
 .*.swp
 .DS_Store
+.fedep

@@ -1,7 +1,7 @@
 {
   "author": "zbryikt",
   "name": "@plotdb/sfx",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "audio runtime for deterministic animation: a timeline synced to animation time, imperative playback, and procedural synthesized sounds",
   "license": "MIT",
   "main": "dist/index.min.js",

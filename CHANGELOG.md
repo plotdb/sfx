@@ -1,6 +1,6 @@
 # Change Logs
 
-## master
+## v0.0.2
 
  - feature: 新增合成聲
    - 動作：`slide` `rise` `fall` `count` `snap` `draw` `glitch`，以及通用的 `sweep`
