@@ -190,7 +190,7 @@
       return v;
     };
     mediaVoice = function(name, opt){
-      var c, a, g, when_, level, end, v, go, delay;
+      var c, a, g, when_, level, v, go, delay, buf, offset, toEnd;
       opt == null && (opt = {});
       c = S.ctx();
       a = new Audio();
@@ -210,11 +210,6 @@
         g.gain.linearRampToValueAtTime(level, when_ + opt.fadeIn);
       } else {
         g.gain.setValueAtTime(level, when_);
-      }
-      if (opt.duration != null && opt.fadeOut) {
-        end = when_ + opt.duration;
-        g.gain.setValueAtTime(level, Math.max(when_, end - opt.fadeOut));
-        g.gain.linearRampToValueAtTime(0, end);
       }
       v = {
         name: name,
@@ -244,9 +239,28 @@
       delay = Math.max(0, when_ - c.currentTime);
       v.timers.push(setTimeout(go, delay * 1000));
       if (opt.duration != null) {
-        v.timers.push(setTimeout(function(){
-          return stopVoice(v, 0.02);
-        }, (delay + opt.duration) * 1000));
+        buf = S.buffers[name];
+        offset = opt.offset || 0;
+        toEnd = !a.loop && buf && offset + opt.duration * a.playbackRate >= buf.duration - 0.02;
+        a.addEventListener('playing', function(){
+          var left, now;
+          if (v.ended) {
+            return;
+          }
+          left = Math.max(0, opt.duration - (a.currentTime - offset) / a.playbackRate);
+          now = c.currentTime;
+          if (opt.fadeOut) {
+            g.gain.setValueAtTime(level, Math.max(now, now + left - opt.fadeOut));
+            g.gain.linearRampToValueAtTime(0, now + left);
+          }
+          if (!toEnd) {
+            return v.timers.push(setTimeout(function(){
+              return stopVoice(v, 0.02);
+            }, left * 1000));
+          }
+        }, {
+          once: true
+        });
       }
       a.onended = function(){
         v.ended = true;

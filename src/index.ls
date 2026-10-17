@@ -139,10 +139,6 @@ do ->
       g.gain.setValueAtTime 0, when_
       g.gain.linearRampToValueAtTime level, when_ + opt.fadeIn
     else g.gain.setValueAtTime level, when_
-    if opt.duration? and opt.fadeOut
-      end = when_ + opt.duration
-      g.gain.setValueAtTime level, Math.max(when_, end - opt.fadeOut)
-      g.gain.linearRampToValueAtTime 0, end
     v = {name, media: a, gain: g, level, ended: false, timers: []}
     go = ->
       if v.ended => return
@@ -150,7 +146,21 @@ do ->
       if a.readyState >= 1 => seek-then-play! else a.addEventListener \loadedmetadata, seek-then-play, {once: true}
     delay = Math.max 0, when_ - c.currentTime
     v.timers.push setTimeout(go, delay * 1000)
-    if opt.duration? => v.timers.push setTimeout((-> stop-voice v, 0.02), (delay + opt.duration) * 1000)
+    # 結束時間 ( 停止、淡出 ) 從真正發聲 ( playing ) 才開始算: go 之後還要等載入、跳轉、play, 常有數百毫秒到一秒以上;
+    # 若照排程時間算, 結尾會被切掉同樣長度. 播到檔案結尾的不另外停 ( 交給 onended ), 只有循環或刻意截短的才排停止
+    if opt.duration?
+      buf = S.buffers[name]
+      offset = opt.offset or 0
+      to-end = !a.loop and buf and offset + opt.duration * a.playbackRate >= buf.duration - 0.02
+      a.addEventListener \playing, (->
+        if v.ended => return
+        left = Math.max 0, opt.duration - (a.currentTime - offset) / a.playbackRate
+        now = c.currentTime
+        if opt.fadeOut
+          g.gain.setValueAtTime level, Math.max(now, now + left - opt.fadeOut)
+          g.gain.linearRampToValueAtTime 0, now + left
+        if !to-end => v.timers.push setTimeout((-> stop-voice v, 0.02), left * 1000)
+      ), {once: true}
     a.onended = -> v.ended = true; S.voices = S.voices.filter (x) -> x != v
     S.voices.push v
     v
