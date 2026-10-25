@@ -1,5 +1,10 @@
 # Change Logs
 
+## v0.0.5
+
+ - fix: lotion 0.10 的循環 ( `loop: true`、`player.loop(a, b)` ) 接回時聲音沒有跟著回去: 接回走 lotion 內部的 `_seek`,
+   原本只攔截 `seek`. 改為攔截 `_seek` ( lotion 0.9 起; 較舊的版本照舊攔截 `seek` )
+
 ## v0.0.4
 
  - fix: 倍速時 ( `<audio>` 保持音高的路徑 ) 旁白 / 配樂結尾被切掉: 停止與淡出原本從排程時間起算, 沒算到載入、跳轉、play 的延遲;
