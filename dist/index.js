@@ -482,13 +482,14 @@
       return startTimeline(t);
     };
     hook = function(L){
-      var P, play, seek;
+      var P, play, sk, seek;
       if (!L || !L.player || L.player.__sound) {
         return;
       }
       P = L.player.prototype;
       play = P.play;
-      seek = P.seek;
+      sk = P._seek ? '_seek' : 'seek';
+      seek = P[sk];
       P.play = function(go){
         var r;
         go == null && (go = true);
@@ -501,7 +502,7 @@
         }
         return r;
       };
-      P.seek = function(t){
+      P[sk] = function(t){
         var last, r;
         last = this.t;
         r = seek.apply(this, arguments);

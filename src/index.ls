@@ -281,12 +281,14 @@ do ->
     if !L or !L.player or L.player.__sound => return
     P = L.player.prototype
     play = P.play
-    seek = P.seek
+    # lotion 0.9 起所有跳轉 ( seek、循環區段接回 ) 都經過 _seek; 較舊的版本只有 seek
+    sk = if P._seek => \_seek else \seek
+    seek = P[sk]
     P.play = (go = true) ->
       r = play.apply @, arguments
       if !S.external => S.transport {playing: @playing, t: @t}
       r
-    P.seek = (t) ->
+    P[sk] = (t) ->
       last = @t
       r = seek.apply @, arguments
       if !S.external and @started
