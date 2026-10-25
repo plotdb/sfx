@@ -1,6 +1,6 @@
 # Change Logs
 
-## master
+## v0.0.5
 
  - fix: lotion 0.10 的循環 ( `loop: true`、`player.loop(a, b)` ) 接回時聲音沒有跟著回去: 接回走 lotion 內部的 `_seek`,
    原本只攔截 `seek`. 改為攔截 `_seek` ( lotion 0.9 起; 較舊的版本照舊攔截 `seek` )
