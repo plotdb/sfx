@@ -716,6 +716,7 @@
       if (!playing) {
         return false;
       }
+      S.playing = true;
       stopTimeline(0.3);
       startTimeline(S.t || 0, 0.3);
       return true;
@@ -791,6 +792,13 @@
         return stopTimeline();
       }
       S.resume();
+      if (wait === undefined && S.waiting && S.waiting.kind === 'pause') {
+        setWait(null, {
+          t: t,
+          playing: true
+        });
+        return;
+      }
       if (inLoop(t)) {
         return;
       }
@@ -801,12 +809,13 @@
       return startTimeline(t);
     };
     hook = function(L){
-      var P, play, fire, sk, seek, waiting;
+      var P, pk, play, fire, sk, seek, waiting;
       if (!L || !L.player || L.player.__sound) {
         return;
       }
       P = L.player.prototype;
-      play = P.play;
+      pk = P._play ? '_play' : 'play';
+      play = P[pk];
       fire = P.fire;
       sk = P._seek ? '_seek' : 'seek';
       seek = P[sk];
@@ -823,7 +832,7 @@
           return null;
         }
       };
-      P.play = function(go){
+      P[pk] = function(go){
         var r;
         go == null && (go = true);
         r = play.apply(this, arguments);

@@ -378,6 +378,8 @@ do ->
     S.waiting = null
     for h in held.slice! => stop-hold h
     if !playing => return false
+    # 由 player 的 wait 事件觸發時可能早於 transport 的 playing: 先記下播放中, 隨後的 transport 不再重排
+    S.playing = true
     stop-timeline 0.3
     start-timeline (S.t or 0), 0.3
     true
@@ -419,6 +421,8 @@ do ->
         for h in held.slice! => stop-hold h, 0.1
       return stop-timeline!
     S.resume!
+    # 書自己暫停後恢復播放: 結束等待 ( 重新排程並短淡入 ). player 隨後送出的 wait: null 不會再重排
+    if wait == undefined and S.waiting and S.waiting.kind == \pause => set-wait null, {t, playing: true}; return
     if in-loop t => return
     if was and !force => return
     stop-timeline!
@@ -428,7 +432,9 @@ do ->
   hook = (L) ->
     if !L or !L.player or L.player.__sound => return
     P = L.player.prototype
-    play = P.play
+    # 實際改變播放狀態的是 _play ( lotion 0.9 起; play 與讀者的 toggle 都經過它 ); 較舊的版本攔截 play
+    pk = if P._play => \_play else \play
+    play = P[pk]
     fire = P.fire
     # lotion 0.9 起所有跳轉 ( seek、循環區段接回 ) 都經過 _seek; 較舊的版本只有 seek
     sk = if P._seek => \_seek else \seek
@@ -438,7 +444,7 @@ do ->
     waiting = (p) ->
       if \waiting of p => return p.waiting
       if p.span and p.playing and p.t >= p.span.0 - EPS and p.t <= p.span.1 + EPS => {kind: \loop, span: p.span} else null
-    P.play = (go = true) ->
+    P[pk] = (go = true) ->
       r = play.apply @, arguments
       if !S.external => S.transport {playing: @playing, t: @t}
       r
