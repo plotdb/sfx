@@ -1,6 +1,6 @@
 # Change Logs
 
-## master
+## v0.0.6
 
  - feature: 等待與事件聲音 ( 見 README > 等待 ). 書停下來等讀者 ( 書自己的循環區段 `p.loop(a, b)` ) 時, 時間軸聲音壓低,
    循環接回不再重排 ( 0.0.5 起每圈都重排, 配樂、環境音每圈倒退 ); 離開時重新排程並短淡入
@@ -11,6 +11,8 @@
      lotion.player 有 `waiting` 時以它為準
    - `S.timeline(items, {duck, duckFade})`: 等待時壓低的程度 ( 預設 0.3 ) 與淡變秒數 ( 預設 0.5 )
    - 讀者暫停不算等待, 一律安靜. 離線混音 ( `S.render` ) 不含事件聲音
+   - lotion 0.12 起 ( `player.waiting` ) 也分得出書自己 `p.pause()` 等讀者: 等待中 `loop: true` 的聲音照常播
+ - tweak: 攔截 lotion.player 的 `_play` ( lotion 0.9 起 ) 而非 `play`, 讀者的播放 / 暫停也都經過它
 
 ## v0.0.5
 
