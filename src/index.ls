@@ -114,7 +114,8 @@ do ->
       src.start when_, offset, (if src.loop => undefined else opt.duration * (opt.rate or 1))
       if src.loop => src.stop end
     else src.start when_, offset
-    v = {name, src, gain: g, level, ended: false}
+    # when / offset / rate / loop: 換算目前播到檔案的哪裡 ( 進入等待時以同一位置接手, 見 hold )
+    v = {name, src, buf, gain: g, level, ended: false, when: when_, offset, rate: opt.rate or 1, loop: src.loop, bus: opt.bus or \sfx}
     src.onended = -> v.ended = true; S.voices = S.voices.filter (x) -> x != v
     S.voices.push v
     v
@@ -139,7 +140,7 @@ do ->
       g.gain.setValueAtTime 0, when_
       g.gain.linearRampToValueAtTime level, when_ + opt.fadeIn
     else g.gain.setValueAtTime level, when_
-    v = {name, media: a, gain: g, level, ended: false, timers: []}
+    v = {name, media: a, gain: g, level, ended: false, timers: [], when: when_, loop: a.loop, bus: opt.bus or \music}
     go = ->
       if v.ended => return
       seek-then-play = -> a.currentTime = opt.offset or 0; a.play!catch(->)
@@ -221,7 +222,12 @@ do ->
   #  - sfx bus 預設 align: 'peak', 讓起音點落在 t 上
   #  - sound 可以是陣列: 依項目的位置與時間挑一個 ( 可重現, 拖曳、重播、離線混音都一樣 )
   #  - vary ( 0~1 ): 每個項目的音高與音量略有不同 ( 同樣可重現 )
-  S.timeline = (items = []) ->
+  #  - hold: [a, b]: 事件聲音, 不排在時間軸上, 書在 [a, b] 內等待時才播 ( 見「等待」 )
+  # opt: duck ( 等待時時間軸聲音壓到多少, 預設 0.3, 0 為靜音 ), duckFade ( 壓低的淡變秒數, 預設 0.5 )
+  S.duck = {level: 0.3, fade: 0.5}
+  S.timeline = (items = [], opt = {}) ->
+    if opt.duck? => S.duck.level = +opt.duck
+    if opt.duckFade? => S.duck.fade = +opt.duckFade
     S.items = items.map (it, k) ->
       it = {} <<< it
       if Array.isArray(it.sound) or it.vary
@@ -233,45 +239,187 @@ do ->
           it.rate = (it.rate or 1) * j.rate
           it.gain = (if it.gain? => it.gain else 1) * j.gain
       it
-    if S.playing => S.transport {playing: true, t: S.t or 0, force: true}
+    if S.waiting => w = S.waiting; set-wait null; set-wait w
+    else if S.playing => S.transport {playing: true, t: S.t or 0, force: true}
     S
 
   # lotion 的 cues [{t, sfx, gain}] 轉成時間軸項目
   S.cues = (cues = [], opt = {}) -> S.timeline cues.map (c) -> {t: c.t, sound: c.sfx or c.sound, gain: c.gain} <<< opt
 
-  stop-timeline = -> for v in S.voices when !v.manual => stop-voice v, 0.03
+  stop-timeline = (fade = 0.03) -> for v in S.voices when !v.manual and !v.held => stop-voice v, fade
+
+  # 項目在動畫時間上的範圍: 檔案開頭對應的時間 start 與長度 len ( loop 沒有 until 時到 end )
+  span-of = (it, buf, end = 1e9) ->
+    b = it.bus or \sfx
+    lead = if (it.align or (if b == \sfx => \peak else \start)) == \peak => S.peak(buf) else 0
+    start = it.t - lead
+    len = if it.loop => ((if it.until? => it.until else end) - start) else (it.duration or buf.duration / (it.rate or 1))
+    {start, len, bus: b}
 
   # 倍速 R ( S.rate ): 動畫時間 Δ 對應 ctx 時間 Δ / R, 播放速率乘上 R
-  start-timeline = (t0) ->
+  # fade: 從中途接上的聲音淡入幾秒 ( 一般跳轉為 0, 離開等待時短淡入 )
+  start-timeline = (t0, fade = 0) ->
     c = S.ctx!
     now = c.currentTime + 0.02
     R = S.rate or 1
-    for it in S.items
+    for it in S.items when !it.hold
       buf = S.buffers[it.sound]
       if !buf => continue
-      b = it.bus or \sfx
-      lead = if (it.align or (if b == \sfx => \peak else \start)) == \peak => S.peak(buf) else 0
-      start = it.t - lead                          # 檔案開頭對應的動畫時間
-      len = if it.loop => ((if it.until? => it.until else 1e9) - start) else (it.duration or buf.duration / (it.rate or 1))
+      {start, len, bus: b} = span-of it, buf
       if start + len <= t0 => continue
       skip = Math.max 0, t0 - start                 # 已經過去的部分
       opt = {} <<< it <<< {bus: b, when: now + Math.max(0, start - t0) / R, duration: (len - skip) / R, rate: (it.rate or 1) * R}
       opt.offset = (it.offset or 0) + (if it.loop => skip % buf.duration else skip * (it.rate or 1))
-      if skip > 0 and it.fadeIn => opt.fadeIn = 0
+      if skip > 0 => opt.fadeIn = fade
       # 倍速時旁白與配樂要保持音高 ( 有網址才行; 程式合成的聲音沒有, 照樣變調 ); 短音效直接變速
-      if R != 1 and b in <[voice music]> and S.urls[it.sound] => media-voice it.sound, opt else voice buf, opt
+      v = if R != 1 and b in <[voice music]> and S.urls[it.sound] => media-voice it.sound, opt else voice buf, opt
+      if v => v.item = it
+
+  # ---------------------------------------------------------------- 等待 ( 事件聲音 )
+  # 書停下來等讀者: w = {kind: 'loop', span: [a, b]} ( 書自己的循環區段 p.loop(a, b) ) | {kind: 'pause', t} ( 書自己 p.pause() )
+  #  - 進入: 時間軸聲音壓低到 S.duck.level, 還沒開始的取消; 循環接回時不重排 ( 不再每圈倒退 ).
+  #    符合的 hold 項目開始播 ( 實際時間, 不管 seek ). 沒有符合的 hold 項目時, 時間軸上 loop: true 的聲音
+  #    ( 配樂、環境音 ) 由事件聲音從同一位置接手, 照常播.
+  #  - 離開: 事件聲音淡出, 時間軸從目前的時間重新排程並短淡入. 跳到別段照一般跳轉
+  # 讀者暫停不是等待: 一律安靜. 輸出影片 ( 初始狀態不會等待 ) 與離線混音只算時間軸, 不受影響
+  S.waiting = null
+  held = []     # 播放中的事件聲音 {voices, timer, fadeOut}
+  EPS = 0.05
+
+  norm-wait = (w) ->
+    if !w => return null
+    if (w.kind or \loop) == \loop
+      if w.span and w.span.length == 2 => {kind: \loop, span: [+w.span.0, +w.span.1]} else null
+    else {kind: \pause, t: +(w.t or 0)}
+  same-wait = (a, b) ->
+    if !a or !b => return !a and !b
+    a.kind == b.kind and "#{a.span}" == "#{b.span}" and a.t == b.t
+  in-loop = (t) -> S.waiting and S.waiting.kind == \loop and t >= S.waiting.span.0 - EPS and t <= S.waiting.span.1 + EPS
+
+  hold-match = (it, w) ->
+    [a, b] = it.hold
+    if w.kind == \loop => w.span.0 >= a - EPS and w.span.1 <= b + EPS
+    else w.t >= a - EPS and w.t <= b + EPS
+
+  # 事件聲音: loop 持續到離開等待; every 每隔幾秒 ( 動畫時間, 依倍速換算 ) 播一次 ( 例如每圈的提示音 ); 否則播一次
+  start-hold = (item) ->
+    h = {voices: [], timer: null, fadeOut: (if item.fadeOut? => item.fadeOut else 0.5), stopped: false}
+    o = {bus: item.bus or \sfx, gain: item.gain, rate: item.rate, offset: item.offset}
+    c = S.ctx!
+    if item.every
+      step = item.every / (S.rate or 1)
+      next = c.currentTime + 0.02 + (item.delay or 0) / (S.rate or 1)
+      tick = ->
+        if h.stopped => return
+        # 提前排好 0.15 秒內的: setTimeout 不準, 起音時間交給 ctx
+        while next < c.currentTime + 0.15
+          if v = voice(item.sound, {} <<< o <<< {when: Math.max(next, c.currentTime)}) => v.held = true; h.voices.push v
+          next += step
+        h.voices = h.voices.filter (v) -> !v.ended
+        h.timer = setTimeout tick, 50
+      tick!
+    else
+      fi = if item.fadeIn? => item.fadeIn else if item.loop => 0.5 else 0
+      if v = voice(item.sound, {} <<< o <<< {loop: !!item.loop, fadeIn: fi}) => v.held = true; h.voices.push v
+    held.push h
+    h
+
+  stop-hold = (h, fade) ->
+    h.stopped = true
+    clearTimeout h.timer
+    for v in h.voices => stop-voice v, (if fade? => fade else h.fadeOut)
+    held := held.filter (x) -> x != h
+
+  # 聲音目前播到檔案的哪裡 ( 秒 )
+  position = (v) ->
+    if v.media => return v.media.currentTime
+    p = v.offset + Math.max(0, ctx.currentTime - v.when) * v.rate
+    if v.loop => p % v.buf.duration else p
+
+  # 時間軸上的 loop 聲音改由事件聲音接手: 同一個檔案從同一個位置接著播 ( 無縫 ), 不再跟著時間軸
+  adopt = (v) ->
+    buf = S.buffers[v.item.sound]
+    if !buf => return
+    n = voice buf, {loop: true, offset: position(v), gain: v.level, bus: v.bus, rate: v.item.rate or 1, fadeIn: 0.05}
+    stop-voice v, 0.05
+    if n => n.held = true; held.push {voices: [n], fadeOut: 0.5}
+
+  # 在 t 上應該響著的 loop 聲音由事件聲音從對應的位置播起
+  resume-beds = (t) ->
+    for it in S.items when it.loop and !it.hold
+      buf = S.buffers[it.sound]
+      if !buf => continue
+      {start, len, bus} = span-of it, buf
+      if t < start or t >= start + len => continue
+      pos = ((it.offset or 0) + (t - start) * (it.rate or 1)) % buf.duration
+      n = voice buf, {loop: true, offset: pos, gain: (if it.gain? => it.gain else 1), bus, rate: it.rate or 1, fadeIn: 0.3}
+      if n => n.held = true; held.push {voices: [n], fadeOut: 0.5}
+
+  enter-wait = (w) ->
+    S.waiting = w
+    now = S.ctx!currentTime
+    holds = S.items.filter (it) -> it.hold and hold-match(it, w)
+    lv = S.duck.level
+    for it in holds when it.duck? => lv = Math.min lv, +it.duck
+    beds = !holds.length
+    for v in S.voices.slice! when !v.manual and !v.held
+      if v.when > now + 0.01 => stop-voice v, 0.01
+      else if beds and v.loop and v.item => adopt v
+      else
+        v.gain.gain.cancelScheduledValues now
+        v.gain.gain.setValueAtTime v.gain.gain.value, now
+        v.gain.gain.linearRampToValueAtTime v.level * lv, now + Math.max(0.01, S.duck.fade)
+    # 時間軸已經停了 ( 書自己暫停、讀者暫停後回到循環中 ): loop 聲音從對應的位置接著播
+    if beds and !S.voices.some((v) -> v.held) => resume-beds (if w.kind == \pause => w.t else S.t or 0)
+    for it in holds => start-hold it
+
+  # 回傳是否已重新排程時間軸
+  leave-wait = (playing) ->
+    S.waiting = null
+    for h in held.slice! => stop-hold h
+    if !playing => return false
+    stop-timeline 0.3
+    start-timeline (S.t or 0), 0.3
+    true
+
+  # o: t ( 目前的動畫時間 ), playing. 回傳是否已重新排程時間軸
+  set-wait = (w, o = {}) ->
+    w = norm-wait w
+    if o.t? => S.t = o.t
+    if same-wait(w, S.waiting) => return false
+    rs = if S.waiting => leave-wait(if o.playing? => o.playing else S.playing) else false
+    if w => enter-wait w
+    rs
+
+  # 書開始 ( w ) / 結束 ( null ) 等待. 頁面上的 lotion.player 自動判斷 ( 見 hook ); 外部時鐘用 transport({wait})
+  S.wait = (w, t) -> set-wait w, {t}; S
+
+  # 指令式事件聲音 ( 例如在 p.at 的回呼裡 ): 播到等待結束或讀者暫停時淡出. opt 同 hold 項目 ( loop, every, gain, fadeIn, fadeOut, bus, rate )
+  S.hold = (name, opt = {}) ->
+    S.resume!
+    h = start-hold({} <<< opt <<< {sound: name})
+    stop: (fade) -> stop-hold h, fade
+    voices: h.voices
 
   # 外層或 player 告知播放狀態; 拖曳 ( 非連續的時間 ) 時重新排程
   # rate: 倍速 ( 外層的時鐘倍速 ); 改變時重新排程
-  S.transport = ({playing, t = 0, force, from, rate} = {}) ->
+  # wait: 書開始 / 結束等待 ( 同 S.wait; 不帶則不變 ). 循環等待中接回 ( 時間仍在區段內 ) 不重排, 帶 force 也一樣
+  S.transport = ({playing, t = 0, force, from, rate, wait} = {}) ->
     if from and from != \player => S.external = true
     if rate? and +rate > 0 and +rate != S.rate => S.rate = +rate; force = true
     was = S.playing
     S.playing = !!playing
     S.t = t
     S.t-at = (ctx and ctx.currentTime) or 0
-    if !playing => return stop-timeline!
+    if wait != undefined and set-wait(wait, {t, playing: !!playing}) => return
+    if !playing
+      # 讀者暫停: 一律安靜 ( 書自己暫停等讀者時是 {kind: 'pause'} 的等待, 事件聲音照常 )
+      if !(S.waiting and S.waiting.kind == \pause)
+        if S.waiting => leave-wait false
+        for h in held.slice! => stop-hold h, 0.1
+      return stop-timeline!
     S.resume!
+    if in-loop t => return
     if was and !force => return
     stop-timeline!
     start-timeline t
@@ -281,9 +429,15 @@ do ->
     if !L or !L.player or L.player.__sound => return
     P = L.player.prototype
     play = P.play
+    fire = P.fire
     # lotion 0.9 起所有跳轉 ( seek、循環區段接回 ) 都經過 _seek; 較舊的版本只有 seek
     sk = if P._seek => \_seek else \seek
     seek = P[sk]
+    # 書是否在等待: player 有 waiting 時以它為準; 否則書自己的循環區段生效、播放中且時間在區段內即算
+    # ( 分不出書自己暫停與讀者暫停, 暫停一律不算 )
+    waiting = (p) ->
+      if \waiting of p => return p.waiting
+      if p.span and p.playing and p.t >= p.span.0 - EPS and p.t <= p.span.1 + EPS => {kind: \loop, span: p.span} else null
     P.play = (go = true) ->
       r = play.apply @, arguments
       if !S.external => S.transport {playing: @playing, t: @t}
@@ -292,9 +446,14 @@ do ->
       last = @t
       r = seek.apply @, arguments
       if !S.external and @started
-        # 播放中被拖到別處 ( 跳動 > 0.3 秒或往回 ): 重新排程
+        # 播放中被拖到別處 ( 跳動 > 0.3 秒或往回 ): 重新排程 ( 循環等待中接回時 transport 會略過 )
         if @playing and (@t < last - 0.01 or @t - last > 0.3) => S.transport {playing: true, t: @t, force: true}
         if !@playing and S.playing => S.transport {playing: false, t: @t}
+      r
+    # 循環區段的設定與取消、播放 / 暫停、時間前進時檢查等待的開始與結束
+    P.fire = (name, v) ->
+      r = fire.apply @, arguments
+      if !S.external and @started and name in <[wait loop play pause time]> => set-wait waiting(@), {t: @t, playing: @playing}
       r
     L.player.__sound = true
   if window.lotion => hook window.lotion
@@ -306,12 +465,11 @@ do ->
   S.render = (duration, opt = {}) ->
     sr = opt.sampleRate or SR
     oc = new OfflineAudioContext 2, Math.ceil(duration * sr), sr
-    for it in S.items
+    # 事件聲音 ( hold ) 只在等待時播: 輸出影片用初始狀態, 不會等待
+    for it in S.items when !it.hold
       buf = S.buffers[it.sound]
       if !buf => continue
-      b = it.bus or \sfx
-      lead = if (it.align or (if b == \sfx => \peak else \start)) == \peak => S.peak(buf) else 0
-      start = it.t - lead
+      {start, len} = span-of it, buf, duration
       src = oc.createBufferSource!
       src.buffer = buf
       src.loop = !!it.loop
@@ -323,7 +481,6 @@ do ->
       g.connect oc.destination
       at = Math.max 0, start
       if it.fadeIn => g.gain.setValueAtTime(0, at); g.gain.linearRampToValueAtTime(level, at + it.fadeIn)
-      len = if it.loop => ((if it.until? => it.until else duration) - start) else (it.duration or buf.duration / (it.rate or 1))
       if it.fadeOut => g.gain.setValueAtTime(level, Math.max(at, start + len - it.fadeOut)); g.gain.linearRampToValueAtTime(0, start + len)
       src.start at, (it.offset or 0) + Math.max(0, -start)
       src.stop start + len
@@ -351,6 +508,8 @@ do ->
     loaded: Object.keys(S.buffers).map (k) -> {name: k, duration: +S.buffers[k].duration.toFixed(2), peak: +S.peak(S.buffers[k]).toFixed(3)}
     timeline: S.items.length
     playing: S.playing
+    waiting: S.waiting
+    held: held.length
     # running | suspended ( 被自動播放限制擋住時停在 suspended )
     context: if ctx => ctx.state else null
     errors: S.errors.slice -10

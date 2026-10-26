@@ -1,6 +1,6 @@
 (function(){
   (function(){
-    var SR, S, ctx, bus, isBuffer, peaks, voice, mediaVoice, stopVoice, jitter, currentMusic, stopTimeline, startTimeline, hook, NOTES, rng, make, coef, biquad, biquadTv, noise, env, pan, synth, place, partial, fadeOut, wander, glideOsc, COMB, ALLPASS, reverb, glide, grain, pick, bubble, SURFACE, pink, formantVoice, mix, ease, bar, CHORDS, string, metal, ring, gauss, KIT, VEL, parseScore, TWINKLE, resample, wrap, k, PARAMS, name, spec, v, SEMI, NAMES, transpose;
+    var SR, S, ctx, bus, isBuffer, peaks, voice, mediaVoice, stopVoice, jitter, currentMusic, stopTimeline, spanOf, startTimeline, held, EPS, normWait, sameWait, inLoop, holdMatch, startHold, stopHold, position, adopt, resumeBeds, enterWait, leaveWait, setWait, hook, NOTES, rng, make, coef, biquad, biquadTv, noise, env, pan, synth, place, partial, fadeOut, wander, glideOsc, COMB, ALLPASS, reverb, glide, grain, pick, bubble, SURFACE, pink, formantVoice, mix, ease, bar, CHORDS, string, metal, ring, gauss, KIT, VEL, parseScore, TWINKLE, resample, wrap, k, PARAMS, name, spec, v, SEMI, NAMES, transpose;
     if (typeof window !== 'undefined' && window.sfx) {
       return;
     }
@@ -176,9 +176,15 @@
       v = {
         name: name,
         src: src,
+        buf: buf,
         gain: g,
         level: level,
-        ended: false
+        ended: false,
+        when: when_,
+        offset: offset,
+        rate: opt.rate || 1,
+        loop: src.loop,
+        bus: opt.bus || 'sfx'
       };
       src.onended = function(){
         v.ended = true;
@@ -217,7 +223,10 @@
         gain: g,
         level: level,
         ended: false,
-        timers: []
+        timers: [],
+        when: when_,
+        loop: a.loop,
+        bus: opt.bus || 'music'
       };
       go = function(){
         var seekThenPlay;
@@ -370,8 +379,20 @@
       }, opt));
       return currentMusic;
     };
-    S.timeline = function(items){
+    S.duck = {
+      level: 0.3,
+      fade: 0.5
+    };
+    S.timeline = function(items, opt){
+      var w;
       items == null && (items = []);
+      opt == null && (opt = {});
+      if (opt.duck != null) {
+        S.duck.level = +opt.duck;
+      }
+      if (opt.duckFade != null) {
+        S.duck.fade = +opt.duckFade;
+      }
       S.items = items.map(function(it, k){
         var h, j;
         it = import$({}, it);
@@ -389,7 +410,11 @@
         }
         return it;
       });
-      if (S.playing) {
+      if (S.waiting) {
+        w = S.waiting;
+        setWait(null);
+        setWait(w);
+      } else if (S.playing) {
         S.transport({
           playing: true,
           t: S.t || 0,
@@ -409,57 +434,335 @@
         }, opt);
       }));
     };
-    stopTimeline = function(){
+    stopTimeline = function(fade){
       var i$, ref$, len$, v, results$ = [];
+      fade == null && (fade = 0.03);
       for (i$ = 0, len$ = (ref$ = S.voices).length; i$ < len$; ++i$) {
         v = ref$[i$];
-        if (!v.manual) {
-          results$.push(stopVoice(v, 0.03));
+        if (!v.manual && !v.held) {
+          results$.push(stopVoice(v, fade));
         }
       }
       return results$;
     };
-    startTimeline = function(t0){
-      var c, now, R, i$, ref$, len$, it, buf, b, lead, start, len, skip, opt, ref1$, results$ = [];
+    spanOf = function(it, buf, end){
+      var b, lead, start, len;
+      end == null && (end = 1e9);
+      b = it.bus || 'sfx';
+      lead = (it.align || (b === 'sfx' ? 'peak' : 'start')) === 'peak' ? S.peak(buf) : 0;
+      start = it.t - lead;
+      len = it.loop
+        ? (it.until != null ? it.until : end) - start
+        : it.duration || buf.duration / (it.rate || 1);
+      return {
+        start: start,
+        len: len,
+        bus: b
+      };
+    };
+    startTimeline = function(t0, fade){
+      var c, now, R, i$, ref$, len$, it, buf, ref1$, start, len, b, skip, opt, v, results$ = [];
+      fade == null && (fade = 0);
       c = S.ctx();
       now = c.currentTime + 0.02;
       R = S.rate || 1;
       for (i$ = 0, len$ = (ref$ = S.items).length; i$ < len$; ++i$) {
         it = ref$[i$];
-        buf = S.buffers[it.sound];
-        if (!buf) {
-          continue;
-        }
-        b = it.bus || 'sfx';
-        lead = (it.align || (b === 'sfx' ? 'peak' : 'start')) === 'peak' ? S.peak(buf) : 0;
-        start = it.t - lead;
-        len = it.loop
-          ? (it.until != null ? it.until : 1e9) - start
-          : it.duration || buf.duration / (it.rate || 1);
-        if (start + len <= t0) {
-          continue;
-        }
-        skip = Math.max(0, t0 - start);
-        opt = (ref1$ = import$({}, it), ref1$.bus = b, ref1$.when = now + Math.max(0, start - t0) / R, ref1$.duration = (len - skip) / R, ref1$.rate = (it.rate || 1) * R, ref1$);
-        opt.offset = (it.offset || 0) + (it.loop
-          ? skip % buf.duration
-          : skip * (it.rate || 1));
-        if (skip > 0 && it.fadeIn) {
-          opt.fadeIn = 0;
-        }
-        if (R !== 1 && (b === 'voice' || b === 'music') && S.urls[it.sound]) {
-          results$.push(mediaVoice(it.sound, opt));
-        } else {
-          results$.push(voice(buf, opt));
+        if (!it.hold) {
+          buf = S.buffers[it.sound];
+          if (!buf) {
+            continue;
+          }
+          ref1$ = spanOf(it, buf), start = ref1$.start, len = ref1$.len, b = ref1$.bus;
+          if (start + len <= t0) {
+            continue;
+          }
+          skip = Math.max(0, t0 - start);
+          opt = (ref1$ = import$({}, it), ref1$.bus = b, ref1$.when = now + Math.max(0, start - t0) / R, ref1$.duration = (len - skip) / R, ref1$.rate = (it.rate || 1) * R, ref1$);
+          opt.offset = (it.offset || 0) + (it.loop
+            ? skip % buf.duration
+            : skip * (it.rate || 1));
+          if (skip > 0) {
+            opt.fadeIn = fade;
+          }
+          v = R !== 1 && (b === 'voice' || b === 'music') && S.urls[it.sound]
+            ? mediaVoice(it.sound, opt)
+            : voice(buf, opt);
+          if (v) {
+            results$.push(v.item = it);
+          }
         }
       }
       return results$;
     };
+    S.waiting = null;
+    held = [];
+    EPS = 0.05;
+    normWait = function(w){
+      if (!w) {
+        return null;
+      }
+      if ((w.kind || 'loop') === 'loop') {
+        if (w.span && w.span.length === 2) {
+          return {
+            kind: 'loop',
+            span: [+w.span[0], +w.span[1]]
+          };
+        } else {
+          return null;
+        }
+      } else {
+        return {
+          kind: 'pause',
+          t: +(w.t || 0)
+        };
+      }
+    };
+    sameWait = function(a, b){
+      if (!a || !b) {
+        return !a && !b;
+      }
+      return a.kind === b.kind && a.span + "" === b.span + "" && a.t === b.t;
+    };
+    inLoop = function(t){
+      return S.waiting && S.waiting.kind === 'loop' && t >= S.waiting.span[0] - EPS && t <= S.waiting.span[1] + EPS;
+    };
+    holdMatch = function(it, w){
+      var ref$, a, b;
+      ref$ = it.hold, a = ref$[0], b = ref$[1];
+      if (w.kind === 'loop') {
+        return w.span[0] >= a - EPS && w.span[1] <= b + EPS;
+      } else {
+        return w.t >= a - EPS && w.t <= b + EPS;
+      }
+    };
+    startHold = function(item){
+      var h, o, c, step, next, tick, fi, v, ref$;
+      h = {
+        voices: [],
+        timer: null,
+        fadeOut: item.fadeOut != null ? item.fadeOut : 0.5,
+        stopped: false
+      };
+      o = {
+        bus: item.bus || 'sfx',
+        gain: item.gain,
+        rate: item.rate,
+        offset: item.offset
+      };
+      c = S.ctx();
+      if (item.every) {
+        step = item.every / (S.rate || 1);
+        next = c.currentTime + 0.02 + (item.delay || 0) / (S.rate || 1);
+        tick = function(){
+          var v, ref$;
+          if (h.stopped) {
+            return;
+          }
+          while (next < c.currentTime + 0.15) {
+            if (v = voice(item.sound, (ref$ = import$({}, o), ref$.when = Math.max(next, c.currentTime), ref$))) {
+              v.held = true;
+              h.voices.push(v);
+            }
+            next += step;
+          }
+          h.voices = h.voices.filter(function(v){
+            return !v.ended;
+          });
+          return h.timer = setTimeout(tick, 50);
+        };
+        tick();
+      } else {
+        fi = item.fadeIn != null
+          ? item.fadeIn
+          : item.loop ? 0.5 : 0;
+        if (v = voice(item.sound, (ref$ = import$({}, o), ref$.loop = !!item.loop, ref$.fadeIn = fi, ref$))) {
+          v.held = true;
+          h.voices.push(v);
+        }
+      }
+      held.push(h);
+      return h;
+    };
+    stopHold = function(h, fade){
+      var i$, ref$, len$, v;
+      h.stopped = true;
+      clearTimeout(h.timer);
+      for (i$ = 0, len$ = (ref$ = h.voices).length; i$ < len$; ++i$) {
+        v = ref$[i$];
+        stopVoice(v, fade != null
+          ? fade
+          : h.fadeOut);
+      }
+      return held = held.filter(function(x){
+        return x !== h;
+      });
+    };
+    position = function(v){
+      var p;
+      if (v.media) {
+        return v.media.currentTime;
+      }
+      p = v.offset + Math.max(0, ctx.currentTime - v.when) * v.rate;
+      if (v.loop) {
+        return p % v.buf.duration;
+      } else {
+        return p;
+      }
+    };
+    adopt = function(v){
+      var buf, n;
+      buf = S.buffers[v.item.sound];
+      if (!buf) {
+        return;
+      }
+      n = voice(buf, {
+        loop: true,
+        offset: position(v),
+        gain: v.level,
+        bus: v.bus,
+        rate: v.item.rate || 1,
+        fadeIn: 0.05
+      });
+      stopVoice(v, 0.05);
+      if (n) {
+        n.held = true;
+        return held.push({
+          voices: [n],
+          fadeOut: 0.5
+        });
+      }
+    };
+    resumeBeds = function(t){
+      var i$, ref$, len$, it, buf, ref1$, start, len, bus, pos, n, results$ = [];
+      for (i$ = 0, len$ = (ref$ = S.items).length; i$ < len$; ++i$) {
+        it = ref$[i$];
+        if (it.loop && !it.hold) {
+          buf = S.buffers[it.sound];
+          if (!buf) {
+            continue;
+          }
+          ref1$ = spanOf(it, buf), start = ref1$.start, len = ref1$.len, bus = ref1$.bus;
+          if (t < start || t >= start + len) {
+            continue;
+          }
+          pos = ((it.offset || 0) + (t - start) * (it.rate || 1)) % buf.duration;
+          n = voice(buf, {
+            loop: true,
+            offset: pos,
+            gain: it.gain != null ? it.gain : 1,
+            bus: bus,
+            rate: it.rate || 1,
+            fadeIn: 0.3
+          });
+          if (n) {
+            n.held = true;
+            results$.push(held.push({
+              voices: [n],
+              fadeOut: 0.5
+            }));
+          }
+        }
+      }
+      return results$;
+    };
+    enterWait = function(w){
+      var now, holds, lv, i$, len$, it, beds, ref$, v, results$ = [];
+      S.waiting = w;
+      now = S.ctx().currentTime;
+      holds = S.items.filter(function(it){
+        return it.hold && holdMatch(it, w);
+      });
+      lv = S.duck.level;
+      for (i$ = 0, len$ = holds.length; i$ < len$; ++i$) {
+        it = holds[i$];
+        if (it.duck != null) {
+          lv = Math.min(lv, +it.duck);
+        }
+      }
+      beds = !holds.length;
+      for (i$ = 0, len$ = (ref$ = S.voices.slice()).length; i$ < len$; ++i$) {
+        v = ref$[i$];
+        if (!v.manual && !v.held) {
+          if (v.when > now + 0.01) {
+            stopVoice(v, 0.01);
+          } else if (beds && v.loop && v.item) {
+            adopt(v);
+          } else {
+            v.gain.gain.cancelScheduledValues(now);
+            v.gain.gain.setValueAtTime(v.gain.gain.value, now);
+            v.gain.gain.linearRampToValueAtTime(v.level * lv, now + Math.max(0.01, S.duck.fade));
+          }
+        }
+      }
+      if (beds && !S.voices.some(function(v){
+        return v.held;
+      })) {
+        resumeBeds(w.kind === 'pause'
+          ? w.t
+          : S.t || 0);
+      }
+      for (i$ = 0, len$ = holds.length; i$ < len$; ++i$) {
+        it = holds[i$];
+        results$.push(startHold(it));
+      }
+      return results$;
+    };
+    leaveWait = function(playing){
+      var i$, ref$, len$, h;
+      S.waiting = null;
+      for (i$ = 0, len$ = (ref$ = held.slice()).length; i$ < len$; ++i$) {
+        h = ref$[i$];
+        stopHold(h);
+      }
+      if (!playing) {
+        return false;
+      }
+      stopTimeline(0.3);
+      startTimeline(S.t || 0, 0.3);
+      return true;
+    };
+    setWait = function(w, o){
+      var rs;
+      o == null && (o = {});
+      w = normWait(w);
+      if (o.t != null) {
+        S.t = o.t;
+      }
+      if (sameWait(w, S.waiting)) {
+        return false;
+      }
+      rs = S.waiting ? leaveWait(o.playing != null
+        ? o.playing
+        : S.playing) : false;
+      if (w) {
+        enterWait(w);
+      }
+      return rs;
+    };
+    S.wait = function(w, t){
+      setWait(w, {
+        t: t
+      });
+      return S;
+    };
+    S.hold = function(name, opt){
+      var h, ref$;
+      opt == null && (opt = {});
+      S.resume();
+      h = startHold((ref$ = import$({}, opt), ref$.sound = name, ref$));
+      return {
+        stop: function(fade){
+          return stopHold(h, fade);
+        },
+        voices: h.voices
+      };
+    };
     S.transport = function(arg$){
-      var ref$, playing, t, ref1$, force, from, rate, was;
+      var ref$, playing, t, ref1$, force, from, rate, wait, was, i$, len$, h;
       ref$ = arg$ != null
         ? arg$
-        : {}, playing = ref$.playing, t = (ref1$ = ref$.t) != null ? ref1$ : 0, force = ref$.force, from = ref$.from, rate = ref$.rate;
+        : {}, playing = ref$.playing, t = (ref1$ = ref$.t) != null ? ref1$ : 0, force = ref$.force, from = ref$.from, rate = ref$.rate, wait = ref$.wait;
       if (from && from !== 'player') {
         S.external = true;
       }
@@ -471,10 +774,28 @@
       S.playing = !!playing;
       S.t = t;
       S.tAt = (ctx && ctx.currentTime) || 0;
+      if (wait !== undefined && setWait(wait, {
+        t: t,
+        playing: !!playing
+      })) {
+        return;
+      }
       if (!playing) {
+        if (!(S.waiting && S.waiting.kind === 'pause')) {
+          if (S.waiting) {
+            leaveWait(false);
+          }
+          for (i$ = 0, len$ = (ref$ = held.slice()).length; i$ < len$; ++i$) {
+            h = ref$[i$];
+            stopHold(h, 0.1);
+          }
+        }
         return stopTimeline();
       }
       S.resume();
+      if (inLoop(t)) {
+        return;
+      }
       if (was && !force) {
         return;
       }
@@ -482,14 +803,28 @@
       return startTimeline(t);
     };
     hook = function(L){
-      var P, play, sk, seek;
+      var P, play, fire, sk, seek, waiting;
       if (!L || !L.player || L.player.__sound) {
         return;
       }
       P = L.player.prototype;
       play = P.play;
+      fire = P.fire;
       sk = P._seek ? '_seek' : 'seek';
       seek = P[sk];
+      waiting = function(p){
+        if ('waiting' in p) {
+          return p.waiting;
+        }
+        if (p.span && p.playing && p.t >= p.span[0] - EPS && p.t <= p.span[1] + EPS) {
+          return {
+            kind: 'loop',
+            span: p.span
+          };
+        } else {
+          return null;
+        }
+      };
       P.play = function(go){
         var r;
         go == null && (go = true);
@@ -523,6 +858,17 @@
         }
         return r;
       };
+      P.fire = function(name, v){
+        var r;
+        r = fire.apply(this, arguments);
+        if (!S.external && this.started && (name === 'wait' || name === 'loop' || name === 'play' || name === 'pause' || name === 'time')) {
+          setWait(waiting(this), {
+            t: this.t,
+            playing: this.playing
+          });
+        }
+        return r;
+      };
       return L.player.__sound = true;
     };
     if (window.lotion) {
@@ -533,42 +879,39 @@
       });
     }
     S.render = function(duration, opt){
-      var sr, oc, i$, ref$, len$, it, buf, b, lead, start, src, g, level, at, len;
+      var sr, oc, i$, ref$, len$, it, buf, ref1$, start, len, src, g, level, at;
       opt == null && (opt = {});
       sr = opt.sampleRate || SR;
       oc = new OfflineAudioContext(2, Math.ceil(duration * sr), sr);
       for (i$ = 0, len$ = (ref$ = S.items).length; i$ < len$; ++i$) {
         it = ref$[i$];
-        buf = S.buffers[it.sound];
-        if (!buf) {
-          continue;
+        if (!it.hold) {
+          buf = S.buffers[it.sound];
+          if (!buf) {
+            continue;
+          }
+          ref1$ = spanOf(it, buf, duration), start = ref1$.start, len = ref1$.len;
+          src = oc.createBufferSource();
+          src.buffer = buf;
+          src.loop = !!it.loop;
+          src.playbackRate.value = it.rate || 1;
+          g = oc.createGain();
+          level = it.gain != null ? it.gain : 1;
+          g.gain.value = level;
+          src.connect(g);
+          g.connect(oc.destination);
+          at = Math.max(0, start);
+          if (it.fadeIn) {
+            g.gain.setValueAtTime(0, at);
+            g.gain.linearRampToValueAtTime(level, at + it.fadeIn);
+          }
+          if (it.fadeOut) {
+            g.gain.setValueAtTime(level, Math.max(at, start + len - it.fadeOut));
+            g.gain.linearRampToValueAtTime(0, start + len);
+          }
+          src.start(at, (it.offset || 0) + Math.max(0, -start));
+          src.stop(start + len);
         }
-        b = it.bus || 'sfx';
-        lead = (it.align || (b === 'sfx' ? 'peak' : 'start')) === 'peak' ? S.peak(buf) : 0;
-        start = it.t - lead;
-        src = oc.createBufferSource();
-        src.buffer = buf;
-        src.loop = !!it.loop;
-        src.playbackRate.value = it.rate || 1;
-        g = oc.createGain();
-        level = it.gain != null ? it.gain : 1;
-        g.gain.value = level;
-        src.connect(g);
-        g.connect(oc.destination);
-        at = Math.max(0, start);
-        if (it.fadeIn) {
-          g.gain.setValueAtTime(0, at);
-          g.gain.linearRampToValueAtTime(level, at + it.fadeIn);
-        }
-        len = it.loop
-          ? (it.until != null ? it.until : duration) - start
-          : it.duration || buf.duration / (it.rate || 1);
-        if (it.fadeOut) {
-          g.gain.setValueAtTime(level, Math.max(at, start + len - it.fadeOut));
-          g.gain.linearRampToValueAtTime(0, start + len);
-        }
-        src.start(at, (it.offset || 0) + Math.max(0, -start));
-        src.stop(start + len);
       }
       return oc.startRendering();
     };
@@ -631,6 +974,8 @@
         }),
         timeline: S.items.length,
         playing: S.playing,
+        waiting: S.waiting,
+        held: held.length,
         context: ctx ? ctx.state : null,
         errors: S.errors.slice(-10)
       };
