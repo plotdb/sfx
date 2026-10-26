@@ -695,9 +695,7 @@
           }
         }
       }
-      if (beds && !S.voices.some(function(v){
-        return v.held;
-      })) {
+      if (beds && !held.length) {
         resumeBeds(w.kind === 'pause'
           ? w.t
           : S.t || 0);

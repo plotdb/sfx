@@ -370,7 +370,7 @@ do ->
         v.gain.gain.setValueAtTime v.gain.gain.value, now
         v.gain.gain.linearRampToValueAtTime v.level * lv, now + Math.max(0.01, S.duck.fade)
     # 時間軸已經停了 ( 書自己暫停、讀者暫停後回到循環中 ): loop 聲音從對應的位置接著播
-    if beds and !S.voices.some((v) -> v.held) => resume-beds (if w.kind == \pause => w.t else S.t or 0)
+    if beds and !held.length => resume-beds (if w.kind == \pause => w.t else S.t or 0)
     for it in holds => start-hold it
 
   # 回傳是否已重新排程時間軸
